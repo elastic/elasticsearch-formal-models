@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<launchConfiguration type="org.lamport.tla.toolbox.tool.tlc.modelCheck">
+<stringAttribute key="TLCCmdLineParameters" value=""/>
+<intAttribute key="autoLockTime" value="15"/>
+<stringAttribute key="configurationName" value="model"/>
+<intAttribute key="dfidDepth" value="100"/>
+<booleanAttribute key="dfidMode" value="false"/>
+<intAttribute key="distributedFPSetCount" value="0"/>
+<stringAttribute key="distributedNetworkInterface" value="192.168.178.34"/>
+<stringAttribute key="distributedTLC" value="off"/>
+<stringAttribute key="distributedTLCVMArgs" value=""/>
+<intAttribute key="fpBits" value="0"/>
+<intAttribute key="fpIndex" value="1"/>
+<intAttribute key="maxHeapSize" value="20"/>
+<intAttribute key="maxSetSize" value="1000000"/>
+<booleanAttribute key="mcMode" value="true"/>
+<stringAttribute key="modelBehaviorInit" value="Init"/>
+<stringAttribute key="modelBehaviorNext" value="Next"/>
+<stringAttribute key="modelBehaviorSpec" value="Spec"/>
+<intAttribute key="modelBehaviorSpecType" value="2"/>
+<stringAttribute key="modelBehaviorVars" value="nextClientValue, clusterStateOnMaster, globalCheckPoint, tlog, messages, log, store, clientResponses, crashedNodes, waitForResponses, clusterStateOnNode, nextRequestId, nextSeq, localCheckPoint"/>
+<stringAttribute key="modelComments" value=""/>
+<booleanAttribute key="modelCorrectnessCheckDeadlock" value="false"/>
+<listAttribute key="modelCorrectnessInvariants">
+<listEntry value="1CorrespondingResponses"/>
+<listEntry value="1Cardinality(clientResponses) &gt; 1 /\ NoActiveMessages =&gt; AllCopiesSameContents"/>
+<listEntry value="1NoActiveMessages /\ CrashHandled /\ ClusterStateAppliedOnAllNodes =&gt; AllCopiesSameContents"/>
+<listEntry value="1NotTooManyResponses"/>
+<listEntry value="1WellFormedMessages(messages)"/>
+<listEntry value="1WellformedClusterState(clusterStateOnMaster)"/>
+<listEntry value="1AllAckedResponsesStored"/>
+<listEntry value="1MaxOneNodeThinksItIsPrimary"/>
+</listAttribute>
+<listAttribute key="modelCorrectnessProperties"/>
+<stringAttribute key="modelExpressionEval" value=""/>
+<stringAttribute key="modelParameterActionConstraint" value=""/>
+<listAttribute key="modelParameterConstants">
+<listEntry value="ReplicationResponse;;ReplicationResponse;1;0"/>
+<listEntry value="ReplicationRequest;;ReplicationRequest;1;0"/>
+<listEntry value="Primary;;Primary;1;0"/>
+<listEntry value="Replica;;Replica;1;0"/>
+<listEntry value="Unassigned;;Unassigned;1;0"/>
+<listEntry value="Nil;;Nil;1;0"/>
+<listEntry value="Nodes;;{&quot;n1&quot;, &quot;n2&quot;, &quot;n3&quot;};0;0"/>
+<listEntry value="DocumentIds;;{&quot;id1&quot;, &quot;id2&quot;};0;0"/>
+<listEntry value="Success;;Success;1;0"/>
+<listEntry value="Failed;;Failed;1;0"/>
+<listEntry value="InitialClusterStates;;{[ routingTable |-&gt; [n1 |-&gt; Primary, n2 |-&gt; Replica, n3 |-&gt; Replica],&#10;  primaryTerm |-&gt; 1 ]};0;0"/>
+</listAttribute>
+<stringAttribute key="modelParameterContraint" value="nextClientValue &lt;= 3 /\ Cardinality(crashedNodes) &lt;= 1 /\ OnlyStatesWherePrimaryAppliesCSbeforeReplica"/>
+<listAttribute key="modelParameterDefinitions"/>
+<stringAttribute key="modelParameterModelValues" value="{}"/>
+<stringAttribute key="modelParameterNewDefinitions" value=""/>
+<intAttribute key="numberOfWorkers" value="4"/>
+<booleanAttribute key="recover" value="false"/>
+<stringAttribute key="result.mail.address" value=""/>
+<intAttribute key="simuAril" value="-1"/>
+<intAttribute key="simuDepth" value="100"/>
+<intAttribute key="simuSeed" value="-1"/>
+<stringAttribute key="specName" value="elasticsearch"/>
+<stringAttribute key="view" value=""/>
+</launchConfiguration>
