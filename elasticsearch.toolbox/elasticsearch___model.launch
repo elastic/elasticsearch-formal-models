@@ -26,7 +26,6 @@
 <listEntry value="1Cardinality(clientResponses) &gt; 1 /\ NoActiveMessages =&gt; AllCopiesSameContents"/>
 <listEntry value="1NoActiveMessages /\ CrashHandled /\ ClusterStateAppliedOnAllNodes =&gt; AllCopiesSameContents"/>
 <listEntry value="1NotTooManyResponses"/>
-<listEntry value="1WellFormedMessages(messages)"/>
 <listEntry value="1WellformedClusterState(clusterStateOnMaster)"/>
 <listEntry value="1AllAckedResponsesStored"/>
 <listEntry value="1MaxOneNodeThinksItIsPrimary"/>

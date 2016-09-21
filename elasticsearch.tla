@@ -33,9 +33,8 @@ CONSTANTS InitialClusterStates
 ----
 \* Global variables
 
-\* A bag of records representing requests and responses sent from one data node
-\* to another. TLAPS doesn't support the Bags module, so this is a map from
-\* Message to Nat (TODO: check if this is still the case).
+\* Set of requests and responses sent between data nodes.
+\* Requests and responses are modeled as record types.
 VARIABLE messages
 
 \* current cluster state on master (the master is not explicitly modeled as a node)
@@ -100,53 +99,10 @@ Max(s) == CHOOSE x \in s : \A y \in s : x >= y
 
 ----
 \* Helper functions for sending/receiving messages
-\* Note that messages is a map from Message to Nat (number of times message occurs)
 
-\* Helper for Send and Reply. Given a message m and bag of messages, return a
-\* new bag of messages with one more m in it. Limits the number of duplicates to 2
-WithMessage(m, msgs) ==
-    IF m \in DOMAIN msgs THEN
-        [msgs EXCEPT ![m] = Min({msgs[m] + 1, 2}) ]
-    ELSE
-        msgs @@ (m :> 1)
-
-\* Given a set of messages ms and a bag of messages msgs, return a new bag of messages with all
-\* messages ms in it. Limits the number of duplicates to 2
-WithMessages(ms, msgs) == 
-    [m \in DOMAIN msgs \cup ms |-> (
-        IF m \in ms THEN
-            IF m \in DOMAIN msgs THEN
-                Min({msgs[m] + 1, 2})
-            ELSE 1
-        ELSE msgs[m])]
-
-\* Helper for Discard and Reply. Given a message m and bag of messages msgs, return a new bag of
-\* messages with one less m in it.
-WithoutMessage(m, msgs) ==
-    IF m \in DOMAIN msgs THEN
-        IF msgs[m] > 1 THEN
-            [msgs EXCEPT ![m] = @ - 1]
-        ELSE
-            [n \in (DOMAIN msgs \ {m}) |-> msgs[n]]
-    ELSE
-        msgs
-
-\* Helper relations for sending/receiving messages
-
-\* Add a message to the bag of messages.
-Send(m) == messages' = WithMessage(m, messages)
-
-\* Remove a message from the bag of messages. Used when a node is done processing a message.
-Discard(m) == messages' = WithoutMessage(m, messages)
-
-\* Combination of Send and Discard
+\* Remove request from the set of messages and add response instead
 Reply(response, request) ==
-    messages' = WithoutMessage(request, WithMessage(response, messages))
-    
-\* Combination of Send and Discard
-MultiReply(responses, request) ==
-    messages' = WithoutMessage(request, WithMessages(responses, messages))
-    
+    messages' = {response} \cup (messages \ {request})
 
 ----
 \* Helper functions on routing table
@@ -198,7 +154,7 @@ InitNodesVars == /\ nextSeq = [n \in Nodes |-> 1]
                  /\ localCheckPoint = [n1 \in Nodes |-> [n2 \in Nodes |-> 0]]
                  /\ globalCheckPoint = [n \in Nodes |-> 0]
                  
-Init == /\ messages = << >>
+Init == /\ messages = {}
         /\ clusterStateOnMaster \in InitialClusterStates
         /\ crashedNodes = {}
         /\ nextClientValue = 1
@@ -249,7 +205,7 @@ ClientRequest(n, docId) ==
                   /\ nextClientValue' = nextClientValue + 1
                   \* generate unique key for replication requests so that we can relate responses
                   /\ nextRequestId' = nextRequestId + 1
-                  /\ messages' = WithMessages(replRequests, messages)
+                  /\ messages' = messages \cup replRequests
                   /\ waitForResponses' = waitForResponses @@ (nextRequestId :> Replicas(routingTable))
                   /\ log' = [log EXCEPT ![n] = Append(log[n], logEntry)]
     /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, clientResponses, crashedNodes,
@@ -360,14 +316,14 @@ HandleReplicationResponse(m) ==
           ELSE
               UNCHANGED <<clusterStateOnMaster, clientResponses, waitForResponses, localCheckPoint,
                           globalCheckPoint>>
-       /\ Discard(m)       
+       /\ messages' = messages \ {m}       
        /\ UNCHANGED <<nextClientValue, nextRequestId, crashedNodes, clusterStateOnNode, store, tlog,
                       log, nextSeq>>
        
 CleanReplicationResponseToDeadNode(m) ==
     /\ m.mtype = ReplicationResponse
     /\ m.mdest \in crashedNodes
-    /\ Discard(m)
+    /\ messages' = messages \ {m}
     /\ waitForResponses' = [waitForResponses EXCEPT ![m.req] = @ \ {m.msource}]
     /\ UNCHANGED <<clusterStateOnMaster, clientResponses, nextClientValue, nextRequestId, nodeVars,
                    crashedNodes>>
@@ -430,11 +386,11 @@ RemoveCrashedNodeFromClusterState(n) ==
 
 \* Defines how the variables may transition.
 Next == \/ \E n \in Nodes : \E docId \in DocumentIds : ClientRequest(n, docId)
-        \/ \E m \in DOMAIN messages : HandleReplicationRequest(m)
-        \/ \E m \in DOMAIN messages : HandleReplicationResponse(m)
-        \/ \E m \in DOMAIN messages : CleanReplicationResponseToDeadNode(m)
-        \/ \E m \in DOMAIN messages : DropReplicationRequestMessage(m)
-        \/ \E m \in DOMAIN messages : DropReplicationResponseMessage(m)
+        \/ \E m \in messages : HandleReplicationRequest(m)
+        \/ \E m \in messages : HandleReplicationResponse(m)
+        \/ \E m \in messages : CleanReplicationResponseToDeadNode(m)
+        \/ \E m \in messages : DropReplicationRequestMessage(m)
+        \/ \E m \in messages : DropReplicationResponseMessage(m)
         \/ \E n \in Nodes : ApplyClusterStateFromMaster(n)
         \/ \E n \in Nodes : CrashNode(n)
         \/ \E n \in Nodes : RemoveCrashedNodeFromClusterState(n)
@@ -451,13 +407,13 @@ AllCopiesSameContents ==
     \A n1, n2 \in Nodes: ActiveShard(n1) /\ ActiveShard(n2) => store[n1] = store[n2] /\ tlog[n1] = tlog[n2]
 
 \* no active messages        
-NoActiveMessages == DOMAIN messages = {}
+NoActiveMessages == messages = {}
 
 \* for each replication request/response there must be a corresponding entry in waitForResponses
 CorrespondingResponses ==
-    /\ \A m \in DOMAIN messages :
+    /\ \A m \in messages :
            m.mtype = ReplicationResponse => m.req = Nil \/ m.msource \in waitForResponses[m.req]
-    /\ \A m \in DOMAIN messages :
+    /\ \A m \in messages :
            m.mtype = ReplicationRequest => m.req = Nil \/ m.mdest \in waitForResponses[m.req]
 
 NotTooManyResponses ==
@@ -485,8 +441,6 @@ AllAckedResponsesStored ==
                              /\ store[n][r.id].seq >= r.seq
                              /\ r.seq \in DOMAIN tlog[n]
                              /\ tlog[n][r.seq].id = r.id
-
-WellFormedMessages(msgs) == \A m \in (DOMAIN msgs) : (msgs[m] > 0) /\ (msgs[m] <= 2)
 
 WellformedRoutingTable(routingTable) == Cardinality(Primaries(routingTable)) <= 1
 WellformedClusterState(clusterState) == WellformedRoutingTable(clusterState.routingTable) 
