@@ -414,12 +414,14 @@ NoActiveMessages == messages = {}
 \* for each replication request/response there must be a corresponding entry in waitForResponses
 CorrespondingResponses ==
     /\ \A m \in messages :
-           m.mtype = ReplicationResponse => m.req = Nil \/ m.msource \in waitForResponses[m.req]
+           m.mtype = ReplicationResponse => m.msource \in waitForResponses[m.req]
     /\ \A m \in messages :
-           m.mtype = ReplicationRequest => m.req = Nil \/ m.mdest \in waitForResponses[m.req]
+           m.mtype = ReplicationRequest => m.mdest \in waitForResponses[m.req]
 
 NotTooManyResponses ==
-    NoActiveMessages => (\A n \in Nodes : \A r \in DOMAIN waitForResponses : n \notin waitForResponses[r])
+    \A n \in Nodes : \A r \in DOMAIN waitForResponses : n \in waitForResponses[r] =>
+        \E m \in messages : \/ m.mtype = ReplicationRequest /\ m.mdest \in waitForResponses[m.req]
+                            \/ m.mtype = ReplicationResponse /\ m.msource \in waitForResponses[m.req]
 
 \* cluster state on master has been applied to non-crashed nodes
 ClusterStateAppliedOnAllNodes ==
