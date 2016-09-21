@@ -34,8 +34,8 @@ CONSTANTS InitialClusterStates
 \* Global variables
 
 \* A bag of records representing requests and responses sent from one data node
-\* to another. TLAPS doesn't support the Bags module, so this is a function
-\* mapping Message to Nat (TODO: check if this is still the case).
+\* to another. TLAPS doesn't support the Bags module, so this is a map from
+\* Message to Nat (TODO: check if this is still the case).
 VARIABLE messages
 
 \* current cluster state on master (the master is not explicitly modeled as a node)
@@ -50,13 +50,13 @@ VARIABLE clientResponses
 
 clientVars == <<nextClientValue, clientResponses>>
 
-\* Each replication request gets a unique id so that we can relate responses
+\* Replication requests for the same indexing request get a common unique id so that we can relate their responses
 \* (this is just an natural number that we increment on each new client operation)
 VARIABLE nextRequestId
 
 \* map from request id to set of nodes we are waiting a response for. This is used e.g. when we
 \* replicate an index request to two replicas and want to ensure that we only respond to the client
-\* once both replicas have replied
+\* once both replicas have replied (see also nextRequestId)
 VARIABLE waitForResponses
 
 \* set of crashed nodes (used to denote a physical crash of the node)
@@ -100,7 +100,7 @@ Max(s) == CHOOSE x \in s : \A y \in s : x >= y
 
 ----
 \* Helper functions for sending/receiving messages
-\* Note that messages is a function mapping Message to Nat (number of times message occurs)
+\* Note that messages is a map from Message to Nat (number of times message occurs)
 
 \* Helper for Send and Reply. Given a message m and bag of messages, return a
 \* new bag of messages with one more m in it. Limits the number of duplicates to 2
@@ -225,6 +225,7 @@ ClientRequest(n, docId) ==
                                  value |-> nextClientValue]
                   tlogEntry == [id    |-> docId,
                                 seq   |-> nextSeq[n],
+                                term  |-> primaryTerm,
                                 value |-> nextClientValue]
                   newTlog == [tlog EXCEPT ![n] = @ @@ (nextSeq[n] :> tlogEntry)]
                   logEntry == [seq   |-> nextSeq[n],
@@ -277,8 +278,15 @@ HandleReplicationRequest(m) ==
                       newStore == [store[n] EXCEPT ![m.id] = storeEntry]
                       tlogEntry == [id    |-> m.id,
                                     seq   |-> m.seq,
+                                    term  |-> m.term,
                                     value |-> m.value]
-                      newTlog == [tlog EXCEPT ![n] = @ @@ (m.seq :> tlogEntry)]
+                      newTlog == [tlog EXCEPT ![n] =
+                              \* ignore if we already have an entry with higher term
+                              IF m.seq \in DOMAIN @ /\ m.term < @[m.seq].term THEN
+                                  @
+                              ELSE 
+                                  (m.seq :> tlogEntry) @@ @
+                          ]
                       logEntry == [seq  |-> m.seq,
                                    term |-> m.term,
                                    myterm |-> clusterStateOnNode[n].primaryTerm,
@@ -367,8 +375,11 @@ CleanReplicationResponseToDeadNode(m) ==
 \* Take transaction log ntlog1 up to point i and fill the rest with entries from ntlog2
 \* Used for quick resync when replica notices that another replica was promoted to primary                    
 FillMissingFromCP(ntlog1, ntlog2, i) ==
-    [j \in (DOMAIN ntlog1 \cap 1..i) \cup (DOMAIN ntlog2 \ 1..i) |->
-        IF j <= i THEN ntlog1[j] ELSE ntlog2[j]]
+    IF i = 0 THEN
+        ntlog2
+    ELSE
+        [j \in (DOMAIN ntlog1 \cap 1..i) \cup (DOMAIN ntlog2 \ 1..i) |->
+            IF j <= i THEN ntlog1[j] ELSE ntlog2[j]]
 
 \* Cluster state propagated from master is applied to node n
 ApplyClusterStateFromMaster(n) ==
@@ -381,7 +392,7 @@ ApplyClusterStateFromMaster(n) ==
           LET newPrimary == ChoosePrimary(clusterStateOnMaster.routingTable)
               newPrimaryStore == store[newPrimary]
               existingDocumentKeys == {docId \in DOMAIN newPrimaryStore : newPrimaryStore[docId] /= Nil} 
-              globalCP == localCheckPoint[newPrimary][newPrimary] \* Min({globalCheckPoint[n], globalCheckPoint[newPrimary]})
+              globalCP == globalCheckPoint[newPrimary]
           IN  /\ store' = [store EXCEPT ![n] = store[newPrimary]]
               /\ tlog' =  [tlog EXCEPT ![n] = FillMissingFromCP(tlog[n], tlog[newPrimary], globalCP)]
        ELSE
@@ -396,14 +407,6 @@ CrashNode(n) ==
     /\ UNCHANGED <<clusterStateOnMaster, messages, clientVars, nextRequestId, waitForResponses,
                    nodeVars>>
 
-\* Drop replication response message that goes to a crashed node (and clean up waitForResponses)
-DropReplicationResponseMessage(m) ==
-    /\ m.mtype = ReplicationResponse
-    /\ m.result = Success
-    /\ Reply([m EXCEPT !.result = Failed], m)
-    /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, waitForResponses, clientVars,
-                   nodeVars>>
-
 \* Drop replication request message    
 DropReplicationRequestMessage(m) ==
     /\ m.mtype = ReplicationRequest
@@ -411,6 +414,13 @@ DropReplicationRequestMessage(m) ==
     /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, waitForResponses, clientVars,
                    nodeVars>>
 
+\* Drop replication response message
+DropReplicationResponseMessage(m) ==
+    /\ m.mtype = ReplicationResponse
+    /\ m.result = Success
+    /\ Reply([m EXCEPT !.result = Failed], m)
+    /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, waitForResponses, clientVars,
+                   nodeVars>>
 
 \* Master removes crashed node n from its cluster state
 RemoveCrashedNodeFromClusterState(n) ==
