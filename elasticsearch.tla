@@ -219,6 +219,7 @@ DefaultResponse(m) == [mtype     |-> ReplicationResponse,
                        id        |-> m.id,
                        seq       |-> m.seq,
                        term      |-> m.term,
+                       value     |-> m.value,
                        localCP   |-> 0,
                        result    |-> Success]
 
@@ -278,10 +279,11 @@ HandleReplicationResponse(m) ==
                 /\  waitForResponses' = [waitForResponses EXCEPT ![req] = @ \ {rn}]
                 /\  IF (waitForResponses[req] = {rn}) THEN
                          \* last response, answer client
-                         clientResponses' = clientResponses \cup {[req  |-> req,
-                                                                   seq  |-> m.seq,
-                                                                   term |-> m.term,
-                                                                   id   |-> m.id]}
+                         clientResponses' = clientResponses \cup {[req   |-> req,
+                                                                   seq   |-> m.seq,
+                                                                   term  |-> m.term,
+                                                                   id    |-> m.id,
+                                                                   value |-> m.value]}
                     ELSE
                          UNCHANGED <<clientResponses>>
        finishAsFailed ==
@@ -441,6 +443,7 @@ AllAckedResponsesStored ==
                              /\ store[n][r.id].seq >= r.seq
                              /\ r.seq \in DOMAIN tlog[n]
                              /\ tlog[n][r.seq].id = r.id
+                             /\ tlog[n][r.seq].value = r.value
 
 WellformedRoutingTable(routingTable) == Cardinality(Primaries(routingTable)) <= 1
 WellformedClusterState(clusterState) == WellformedRoutingTable(clusterState.routingTable) 
