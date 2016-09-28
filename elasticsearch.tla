@@ -61,6 +61,9 @@ VARIABLE waitForResponses
 \* set of crashed nodes (used to denote a physical crash of the node)
 VARIABLE crashedNodes
 
+\* number of messages that have been dropped (used by model checker to restrict number of failures)
+VARIABLE messageDrops
+
 
 ----
 \* The following variables are all per (data) node (functions with domain Nodes).
@@ -77,16 +80,13 @@ VARIABLE store
 \* transaction log, map from node id to map from sequence number to document
 VARIABLE tlog
 
-\* sequence of log entries (used for debugging purposes)
-VARIABLE log
-
 \* map from node id to node id to natural number
 VARIABLE localCheckPoint
 
 \* map from node id to natural number
 VARIABLE globalCheckPoint
 
-nodeVars == <<clusterStateOnNode, nextSeq, store, log, tlog, localCheckPoint, globalCheckPoint>>
+nodeVars == <<clusterStateOnNode, nextSeq, store, tlog, localCheckPoint, globalCheckPoint>>
 
 
 ----
@@ -150,7 +150,6 @@ InitNodesVars == /\ nextSeq = [n \in Nodes |-> 1]
                  /\ clusterStateOnNode = [n \in Nodes |-> clusterStateOnMaster]
                  /\ store = [n \in Nodes |-> [id \in DocumentIds |-> Nil]]
                  /\ tlog = [n \in Nodes |-> << >>]
-                 /\ log = [n \in Nodes |-> << >>]
                  /\ localCheckPoint = [n1 \in Nodes |-> [n2 \in Nodes |-> 0]]
                  /\ globalCheckPoint = [n \in Nodes |-> 0]
                  
@@ -162,6 +161,7 @@ Init == /\ messages = {}
         /\ nextRequestId = 1
         /\ waitForResponses = << >>
         /\ InitNodesVars
+        /\ messageDrops = 0
 
 ----
 \* Define next step relation
@@ -207,9 +207,8 @@ ClientRequest(n, docId) ==
                   /\ nextRequestId' = nextRequestId + 1
                   /\ messages' = messages \cup replRequests
                   /\ waitForResponses' = waitForResponses @@ (nextRequestId :> Replicas(routingTable))
-                  /\ log' = [log EXCEPT ![n] = Append(log[n], logEntry)]
     /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, clientResponses, crashedNodes,
-                   globalCheckPoint>>
+                   globalCheckPoint, messageDrops>>
     
     
 DefaultResponse(m) == [mtype     |-> ReplicationResponse,
@@ -249,9 +248,8 @@ HandleReplicationRequest(m) ==
                                    myterm |-> clusterStateOnNode[n].primaryTerm,
                                    id |-> m.id,
                                    value |-> m.value]
-                      newLog == Append(log[n], logEntry)
-                  IN  /\ log' = [log EXCEPT ![n] = newLog]
-                      /\ store' = IF store[n][m.id] = Nil \/ m.seq > store[n][m.id].seq THEN
+                      localCP == MaxGaplessSeq(newTlog[n])
+                  IN  /\ store' = IF store[n][m.id] = Nil \/ m.seq > store[n][m.id].seq THEN
                                       [store EXCEPT ![n] = newStore]
                                   ELSE
                                       store
@@ -261,14 +259,15 @@ HandleReplicationRequest(m) ==
                                     ELSE
                                         nextSeq
                       /\ globalCheckPoint' = [globalCheckPoint EXCEPT ![n] = Max({@, m.globalCP})]
-                      /\ Reply([DefaultResponse(m) EXCEPT !.localCP = MaxGaplessSeq(newTlog[n])], m)
+                      /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = localCP]
+                      /\ Reply([DefaultResponse(m) EXCEPT !.localCP = localCP], m)
                /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, nextClientValue, nextRequestId,
-                              clientResponses, waitForResponses, crashedNodes, localCheckPoint>>
+                              clientResponses, waitForResponses, crashedNodes, messageDrops>>
            ELSE
                \* don't replicate entries with lower term than we have
                /\ Reply([DefaultResponse(m) EXCEPT !.result = Failed], m)
                /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, waitForResponses,
-                              crashedNodes, nodeVars>>                                 
+                              crashedNodes, nodeVars, messageDrops>>                                 
 
 \* Replication response arrives on node n with message m
 HandleReplicationResponse(m) ==
@@ -300,7 +299,7 @@ HandleReplicationResponse(m) ==
                         IN  /\ localCheckPoint' = newLocalCheckPoint
                             \* also update global checkpoint if necessary
                             /\ globalCheckPoint' =
-                                   [globalCheckPoint EXCEPT ![n] = Max({@, computedGlobalCP})]
+                                   [globalCheckPoint EXCEPT ![n] = computedGlobalCP]
                     ELSE
                         UNCHANGED <<localCheckPoint, globalCheckPoint>> 
                  /\ UNCHANGED <<clusterStateOnMaster>>
@@ -320,7 +319,7 @@ HandleReplicationResponse(m) ==
                           globalCheckPoint>>
        /\ messages' = messages \ {m}       
        /\ UNCHANGED <<nextClientValue, nextRequestId, crashedNodes, clusterStateOnNode, store, tlog,
-                      log, nextSeq>>
+                      nextSeq, messageDrops>>
        
 CleanReplicationResponseToDeadNode(m) ==
     /\ m.mtype = ReplicationResponse
@@ -328,7 +327,7 @@ CleanReplicationResponseToDeadNode(m) ==
     /\ messages' = messages \ {m}
     /\ waitForResponses' = [waitForResponses EXCEPT ![m.req] = @ \ {m.msource}]
     /\ UNCHANGED <<clusterStateOnMaster, clientResponses, nextClientValue, nextRequestId, nodeVars,
-                   crashedNodes>>
+                   crashedNodes, messageDrops>>
 
 \* Take transaction log ntlog1 up to point i and fill the rest with entries from ntlog2
 \* Used for quick resync when replica notices that another replica was promoted to primary                    
@@ -355,20 +354,21 @@ ApplyClusterStateFromMaster(n) ==
               /\ tlog' =  [tlog EXCEPT ![n] = FillMissingFromCP(tlog[n], tlog[newPrimary], globalCP)]
        ELSE
            UNCHANGED <<store, tlog>>
-    /\ UNCHANGED <<messages, crashedNodes, clusterStateOnMaster, log, nextSeq, clientVars,
-                   nextRequestId, waitForResponses, localCheckPoint, globalCheckPoint>>
+    /\ UNCHANGED <<messages, crashedNodes, clusterStateOnMaster, nextSeq, clientVars,
+                   nextRequestId, waitForResponses, localCheckPoint, globalCheckPoint, messageDrops>>
     
 \* Node n crashes        
 CrashNode(n) ==
     /\ n \notin crashedNodes
     /\ crashedNodes' = crashedNodes \cup {n}
     /\ UNCHANGED <<clusterStateOnMaster, messages, clientVars, nextRequestId, waitForResponses,
-                   nodeVars>>
+                   nodeVars, messageDrops>>
 
 \* Drop replication request message    
 DropReplicationRequestMessage(m) ==
     /\ m.mtype = ReplicationRequest
     /\ Reply([DefaultResponse(m) EXCEPT !.result = Failed], m)
+    /\ messageDrops' = messageDrops + 1
     /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, waitForResponses, clientVars,
                    nodeVars>>
 
@@ -377,6 +377,7 @@ DropReplicationResponseMessage(m) ==
     /\ m.mtype = ReplicationResponse
     /\ m.result = Success
     /\ Reply([m EXCEPT !.result = Failed], m)
+    /\ messageDrops' = messageDrops + 1
     /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, waitForResponses, clientVars,
                    nodeVars>>
 
@@ -384,7 +385,7 @@ DropReplicationResponseMessage(m) ==
 RemoveCrashedNodeFromClusterState(n) ==
     /\ n \in crashedNodes
     /\ clusterStateOnMaster' = RerouteWithFailedShard(n, clusterStateOnMaster)
-    /\ UNCHANGED <<crashedNodes, messages, nextRequestId, waitForResponses, clientVars, nodeVars>>
+    /\ UNCHANGED <<crashedNodes, messages, nextRequestId, waitForResponses, clientVars, nodeVars, messageDrops>>
 
 \* Defines how the variables may transition.
 Next == \/ \E n \in Nodes : \E docId \in DocumentIds : ClientRequest(n, docId)
@@ -467,6 +468,12 @@ MaxOneNodeThinksItIsPrimary ==
 
 UncrashedNodeIsFailed ==
     \A n \in Nodes : n \notin crashedNodes => clusterStateOnMaster.routingTable[n] /= Unassigned
+
+GlobalCheckPointBelowLocalCheckPoints ==
+    \A n \in Nodes : globalCheckPoint[n] <= localCheckPoint[n][n]
+
+LocalCheckPointOnNodeHigherThanWhatOthersHave ==
+    \A n1, n2 \in Nodes : (localCheckPoint[n1][n1] >= localCheckPoint[n2][n1])
 
 
 =============================================================================
