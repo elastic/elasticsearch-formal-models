@@ -220,6 +220,7 @@ DefaultResponse(m) == [mtype     |-> ReplicationResponse,
                        id        |-> m.id,
                        seq       |-> m.seq,
                        rterm     |-> m.rterm,
+                       sterm     |-> m.sterm,
                        value     |-> m.value,
                        recovery  |-> m.recovery,
                        localCP   |-> 0,
@@ -275,11 +276,10 @@ HandleReplicationResponse(m) ==
                 /\  waitForResponses' = [waitForResponses EXCEPT ![req] = @ \ {rn}]
                 /\  IF m.recovery = FALSE /\ waitForResponses[req] = {rn} THEN
                          \* last response, answer client
-                         clientResponses' = clientResponses \cup {[req   |-> req,
+                         clientResponses' = clientResponses \cup {[id    |-> m.id,
+                                                                   value |-> m.value,
                                                                    seq   |-> m.seq,
-                                                                   term  |-> m.rterm,
-                                                                   id    |-> m.id,
-                                                                   value |-> m.value]}
+                                                                   term  |-> m.rterm]}
                     ELSE
                          UNCHANGED <<clientResponses>>
        finishAsFailed ==
@@ -545,9 +545,8 @@ SameTranslogUpToGlobalCheckPoint ==
 
 \* all shard copies of non-crashed nodes contain same data
 AllCopiesSameContents ==
-    \* \A n1, n2 \in Nodes: ActiveShard(n1) /\ ActiveShard(n2) => store[n1] = store[n2] /\ tlog[n1] = tlog[n2]
+    \* TODO: extend invariant to cover store as well
     \A n1, n2 \in Nodes: n1 /= n2 /\ ActiveShard(n1) /\ ActiveShard(n2) => tlog[n1] = tlog[n2]
-    \* SameTranslogUpToGlobalCheckPoint
     
 \* no active messages        
 NoActiveMessages == messages = {}
@@ -581,15 +580,12 @@ AllCopiesSameContentsOnQuietDown ==
     => AllCopiesSameContents
 
 AllAckedResponsesStored ==
-    (/\ NoActiveMessages
-     /\ CrashHandled
-     /\ ClusterStateAppliedOnAllNodes)
-    => \A r \in clientResponses : \A n \in Nodes :
-           ActiveShard(n) => /\ store[n][r.id] /= Nil
-                             /\ store[n][r.id].seq >= r.seq
-                             /\ r.seq \in DOMAIN tlog[n]
-                             /\ tlog[n][r.seq].id = r.id
-                             /\ tlog[n][r.seq].value = r.value
+    \A r \in clientResponses : \A n \in Nodes :
+       ActiveShard(n) => /\ store[n][r.id] /= Nil
+                         /\ store[n][r.id].seq >= r.seq
+                         /\ r.seq \in DOMAIN tlog[n]
+                         /\ tlog[n][r.seq].id = r.id
+                         /\ tlog[n][r.seq].value = r.value
 
 WellformedRoutingTable(routingTable) == Cardinality(Primaries(routingTable)) <= 1
 WellformedClusterState(clusterState) == WellformedRoutingTable(clusterState.routingTable) 
