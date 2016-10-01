@@ -30,6 +30,7 @@
 <listEntry value="1MaxOneNodeThinksItIsPrimary"/>
 <listEntry value="1GlobalCheckPointBelowLocalCheckPoints"/>
 <listEntry value="1LocalCheckPointOnNodeHigherThanWhatOthersHave"/>
+<listEntry value="1SameTranslogUpToGlobalCheckPoint"/>
 </listAttribute>
 <listAttribute key="modelCorrectnessProperties">
 <listEntry value="1&lt;&gt;AllCopiesSameContents"/>
@@ -48,8 +49,10 @@
 <listEntry value="Success;;Success;1;0"/>
 <listEntry value="Failed;;Failed;1;0"/>
 <listEntry value="InitialClusterStates;;{[ routingTable |-&gt; [n1 |-&gt; Primary, n2 |-&gt; Replica, n3 |-&gt; Replica],&#10;  primaryTerm |-&gt; 1 ]};0;0"/>
+<listEntry value="TrimTranslogResponse;;TrimTranslogResponse;1;0"/>
+<listEntry value="TrimTranslogRequest;;TrimTranslogRequest;1;0"/>
 </listAttribute>
-<stringAttribute key="modelParameterContraint" value="messageDrops &lt;= 1 /\ nextClientValue &lt;= 3 /\ Cardinality(crashedNodes) &lt;= 1 /\ &quot;n3&quot; \notin crashedNodes /\ OnlyStatesWherePrimaryAppliesCSbeforeReplica"/>
+<stringAttribute key="modelParameterContraint" value="messageDrops &lt;= 2 /\ nextClientValue &lt;= 4 /\ Cardinality(crashedNodes) &lt;= 1 /\ &quot;n3&quot; \notin crashedNodes /\ OnlyStatesWherePrimaryAppliesCSbeforeReplica"/>
 <listAttribute key="modelParameterDefinitions"/>
 <stringAttribute key="modelParameterModelValues" value="{}"/>
 <stringAttribute key="modelParameterNewDefinitions" value=""/>
