@@ -27,7 +27,6 @@
 <listEntry value="1NotTooManyResponses"/>
 <listEntry value="1WellformedClusterState(clusterStateOnMaster)"/>
 <listEntry value="1AllAckedResponsesStored"/>
-<listEntry value="1MaxOneNodeThinksItIsPrimary"/>
 <listEntry value="1GlobalCheckPointBelowLocalCheckPoints"/>
 <listEntry value="1LocalCheckPointOnNodeHigherThanWhatOthersHave"/>
 <listEntry value="1SameTranslogUpToGlobalCheckPoint"/>

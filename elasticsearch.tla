@@ -265,8 +265,7 @@ HandleReplicationRequest(m) ==
                /\ Reply([DefaultResponse(m) EXCEPT !.result = Failed], m)
                /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, waitForResponses,
                               crashedNodes, nodeVars, messageDrops>>
-                              
-                              
+
 \* Replication response arrives on node n with message m
 HandleReplicationResponse(m) ==
    LET n == m.mdest
@@ -287,6 +286,7 @@ HandleReplicationResponse(m) ==
                 /\ waitForResponses' = [waitForResponses EXCEPT ![req] = {}]
                 /\ UNCHANGED <<clientResponses>>
    IN  /\ n \notin crashedNodes
+       /\ clusterStateOnNode[n].routingTable[n] /= Unassigned \* handled by CleanReplicationResponseToDeadNode
        /\ m.mtype = ReplicationResponse
        /\ IF req \in DOMAIN waitForResponses /\ rn \in waitForResponses[req] THEN
               \/ /\ m.result = Success
@@ -384,7 +384,8 @@ HandleTrimTranslogResponse(m) ==
        
 CleanReplicationResponseToDeadNode(m) ==
     /\ m.mtype = ReplicationResponse
-    /\ m.mdest \in crashedNodes
+    /\ \/ m.mdest \in crashedNodes
+       \/ clusterStateOnNode[m.mdest].routingTable[m.mdest] = Unassigned
     /\ messages' = messages \ {m}
     /\ waitForResponses' = [waitForResponses EXCEPT ![m.req] = @ \ {m.msource}]
     /\ UNCHANGED <<clusterStateOnMaster, clientResponses, nextClientValue, nextRequestId, nodeVars,
@@ -458,6 +459,14 @@ ApplyClusterStateFromMaster(n) ==
             /\ UNCHANGED <<nextRequestId, messages, waitForResponses>>
     /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextSeq, clientVars, store,
                    localCheckPoint, globalCheckPoint, messageDrops>>
+                   
+\* Node fault detection on master finds node n to be isolated from the cluster
+NodeFaultDetectionKicksNodeOut(n) ==
+    /\ n \notin crashedNodes
+    /\ clusterStateOnMaster.routingTable[n] /= Unassigned
+    /\ clusterStateOnMaster' = RerouteWithFailedShard(n, clusterStateOnMaster)
+    /\ UNCHANGED <<crashedNodes, messages, nextRequestId, waitForResponses, clientVars, nodeVars, messageDrops>>
+
     
 \* Node n crashes        
 CrashNode(n) ==
@@ -520,6 +529,7 @@ Next == \/ \E n \in Nodes : \E docId \in DocumentIds : ClientRequest(n, docId)
         \/ \E n \in Nodes : ApplyClusterStateFromMaster(n)
         \/ \E n \in Nodes : CrashNode(n)
         \/ \E n \in Nodes : RemoveCrashedNodeFromClusterState(n)
+        \/ \E n \in Nodes : NodeFaultDetectionKicksNodeOut(n)
 
 ----
 \* Helper functions / relations for making assertions
@@ -543,13 +553,14 @@ AllCopiesSameContents ==
 NoActiveMessages == messages = {}
 
 \* for each replication request/response there must be a corresponding entry in waitForResponses
+\* except if this already lead to a shard failure
 CorrespondingResponses ==
     /\ \A m \in messages :
            m.mtype = ReplicationResponse \/ m.mtype = TrimTranslogResponse =>
-               m.msource \in waitForResponses[m.req]
+               m.msource \in waitForResponses[m.req] \/ clusterStateOnMaster.routingTable[m.mdest] = Unassigned 
     /\ \A m \in messages :
            m.mtype = ReplicationRequest \/ m.mtype = TrimTranslogRequest =>
-               m.mdest \in waitForResponses[m.req]
+               m.mdest \in waitForResponses[m.req] \/ clusterStateOnMaster.routingTable[m.msource] = Unassigned
 
 NotTooManyResponses ==
     \A n \in Nodes : \A r \in DOMAIN waitForResponses : n \in waitForResponses[r] =>
@@ -594,6 +605,7 @@ OnlyStatesWherePrimaryAppliesCSbeforeReplica ==
          /\ clusterStateOnNode[n1] /= clusterStateOnMaster)
         => clusterStateOnNode[n2] /= clusterStateOnMaster
 
+\* does not hold if NodeFaultDetectionKicksNodeOut rule is enabled
 MaxOneNodeThinksItIsPrimary ==
     Cardinality({n \in Nodes : n \notin crashedNodes /\ clusterStateOnNode[n].routingTable[n] = Primary}) <= 1
 
