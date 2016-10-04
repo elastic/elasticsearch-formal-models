@@ -164,24 +164,24 @@ NodeWasPromotedToPrimary(n, incomingRoutingTable, myRoutingTable) ==
     IN  /\ n \notin oldPrimaries
         /\ n \in newPrimaries
         
-RerouteWithFailedShard(n, cs) ==
-    LET rt == cs.routingTable
+RerouteWithFailedShard(n, clusterState) ==
+    LET rt == clusterState.routingTable
     IN  IF rt[n] = Unassigned THEN
-            cs
+            clusterState
         ELSE
             LET primaryFailed == rt[n] = Primary
                 primaryFailedWithReplicaAvailable == primaryFailed /\ Cardinality(Replicas(rt)) > 0
                 \* increase primary term on primary failure
                 newPrimaryTerm == IF primaryFailed THEN
-                                     cs.primaryTerm + 1
+                                     clusterState.primaryTerm + 1
                                   ELSE
-                                     cs.primaryTerm
+                                     clusterState.primaryTerm
                 newRoutingTable == IF primaryFailedWithReplicaAvailable THEN
                                       \* promote other copy to primary
                                       [rt EXCEPT ![n] = Unassigned, ![ChooseReplica(rt)] = Primary]
                                    ELSE
                                       [rt EXCEPT ![n] = Unassigned]
-            IN  [clusterStateOnMaster EXCEPT
+            IN  [clusterState EXCEPT
                     !.routingTable = newRoutingTable,
                     !.primaryTerm  = newPrimaryTerm]
                     
