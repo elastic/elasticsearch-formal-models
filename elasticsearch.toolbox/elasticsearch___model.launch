@@ -51,7 +51,7 @@
 <listEntry value="TrimTranslogResponse;;TrimTranslogResponse;1;0"/>
 <listEntry value="TrimTranslogRequest;;TrimTranslogRequest;1;0"/>
 </listAttribute>
-<stringAttribute key="modelParameterContraint" value="messageDrops &lt;= 1 /\ nextClientValue &lt;= 3 /\ Cardinality(crashedNodes) &lt;= 1 /\ &quot;n3&quot; \notin crashedNodes /\ OnlyStatesWherePrimaryAppliesCSbeforeReplica"/>
+<stringAttribute key="modelParameterContraint" value="messageDrops &lt;= 1 /\ nextClientValue &lt;= 3 /\ Cardinality(crashedNodes) &lt;= 1 /\ &quot;n3&quot; \notin crashedNodes"/>
 <listAttribute key="modelParameterDefinitions"/>
 <stringAttribute key="modelParameterModelValues" value="{}"/>
 <stringAttribute key="modelParameterNewDefinitions" value=""/>

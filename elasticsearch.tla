@@ -81,13 +81,16 @@ VARIABLE store
 \* transaction log, map from node id to map from sequence number to document
 VARIABLE tlog
 
+\* current primary term, map from node id to term number
+VARIABLE currentTerm
+
 \* map from node id to node id to natural number
 VARIABLE localCheckPoint
 
 \* map from node id to natural number
 VARIABLE globalCheckPoint
 
-nodeVars == <<clusterStateOnNode, nextSeq, store, tlog, localCheckPoint, globalCheckPoint>>
+nodeVars == <<clusterStateOnNode, nextSeq, store, tlog, localCheckPoint, globalCheckPoint, currentTerm>>
 
 
 ----
@@ -158,6 +161,7 @@ InitNodesVars == /\ nextSeq = [n \in Nodes |-> 1]
                  /\ tlog = [n \in Nodes |-> << >>]
                  /\ localCheckPoint = [n1 \in Nodes |-> [n2 \in Nodes |-> 0]]
                  /\ globalCheckPoint = [n \in Nodes |-> 0]
+                 /\ currentTerm = [n \in Nodes |-> clusterStateOnMaster.primaryTerm]
                  
 Init == /\ messages = {}
         /\ clusterStateOnMaster \in InitialClusterStates
@@ -187,7 +191,7 @@ MaxGaplessSeq(ntlog) ==
 ClientRequest(n, docId) ==
     /\ n \notin crashedNodes \* only non-crashed nodes can accept client commands
     /\ LET routingTable == clusterStateOnNode[n].routingTable
-           primaryTerm  == clusterStateOnNode[n].primaryTerm
+           primaryTerm  == currentTerm[n]
        IN  /\ routingTable[n] = Primary \* node believes itself to be the primary
            /\ LET tlogEntry == [id    |-> docId,
                                 term  |-> primaryTerm,
@@ -217,21 +221,21 @@ ClientRequest(n, docId) ==
                   /\ messages' = messages \cup replRequests
                   /\ waitForResponses' = waitForResponses @@ (nextRequestId :> Replicas(routingTable))
     /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, clientResponses, crashedNodes,
-                   globalCheckPoint, messageDrops>>
+                   globalCheckPoint, messageDrops, currentTerm>>
     
     
-DefaultResponse(m) == [mtype     |-> ReplicationResponse,
-                       msource   |-> m.mdest,
-                       mdest     |-> m.msource,
-                       req       |-> m.req,
-                       id        |-> m.id,
-                       seq       |-> m.seq,
-                       rterm     |-> m.rterm,
-                       sterm     |-> m.sterm,
-                       value     |-> m.value,
-                       recovery  |-> m.recovery,
-                       localCP   |-> 0,
-                       result    |-> Success]
+DefaultReplicationResponse(m) == [mtype     |-> ReplicationResponse,
+                                  msource   |-> m.mdest,
+                                  mdest     |-> m.msource,
+                                  req       |-> m.req,
+                                  id        |-> m.id,
+                                  seq       |-> m.seq,
+                                  rterm     |-> m.rterm,
+                                  sterm     |-> m.sterm,
+                                  value     |-> m.value,
+                                  recovery  |-> m.recovery,
+                                  localCP   |-> 0,
+                                  result    |-> Success]
                        
 FillGapsAndMarkSafe(ntlog, from, safe) ==
     [j \in 1..Max(DOMAIN ntlog \cup {0}) |-> 
@@ -252,15 +256,14 @@ MarkSafeUpTo(ntlog, to) ==
             [ntlog[j] EXCEPT !.safe = TRUE]
         ELSE
             ntlog[j]]
-                       
+
 
 \* Replication request arrives on node n with message m
 HandleReplicationRequest(m) ==
    LET n == m.mdest
-       currentTerm == clusterStateOnNode[n].primaryTerm
    IN  /\ n \notin crashedNodes
        /\ m.mtype = ReplicationRequest
-       /\ IF m.rterm >= currentTerm THEN
+       /\ IF m.rterm >= currentTerm[n] THEN
                /\ LET storeEntry == [seq   |-> m.seq,
                                      value |-> m.value]
                       newStore == [store[n] EXCEPT ![m.id] = storeEntry]
@@ -271,12 +274,12 @@ HandleReplicationRequest(m) ==
                       newGlobalCP == Max({globalCheckPoint[n], m.globalCP})
                       safeMarkedTlog == [tlog EXCEPT ![n] = MarkSafeUpTo(@, newGlobalCP)]
                       gapsFilledTlog ==
-                          IF m.rterm > currentTerm THEN
+                          IF m.rterm > currentTerm[n] THEN
                               \* there is a new primary in town, cannot safely advance local checkpoint before resync done
                               \* take globalCP from replication request into account
                               [safeMarkedTlog EXCEPT ![n] = FillGapsAndMarkSafe(@, newGlobalCP, FALSE)]
                           ELSE
-                              safeMarkedTlog              
+                              safeMarkedTlog             
                       newTlog == [gapsFilledTlog EXCEPT ![n] =
                               \* ignore if we already have an entry with higher term
                               IF m.seq \in DOMAIN @ /\ m.rterm < @[m.seq].term THEN
@@ -294,14 +297,18 @@ HandleReplicationRequest(m) ==
                                         [nextSeq EXCEPT ![n] = m.seq + 1] 
                                     ELSE
                                         nextSeq
+                      /\ currentTerm' = IF m.rterm > currentTerm[n] THEN
+                                            [currentTerm EXCEPT ![n] = m.rterm]
+                                        ELSE
+                                            currentTerm
                       /\ globalCheckPoint' = [globalCheckPoint EXCEPT ![n] = newGlobalCP]
                       /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = localCP]
-                      /\ Reply([DefaultResponse(m) EXCEPT !.localCP = localCP], m)
+                      /\ Reply([DefaultReplicationResponse(m) EXCEPT !.localCP = localCP], m)
                /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, nextClientValue, nextRequestId,
                               clientResponses, waitForResponses, crashedNodes, messageDrops>>
            ELSE
                \* don't replicate entries with lower term than we have
-               /\ Reply([DefaultResponse(m) EXCEPT !.result = Failed], m)
+               /\ Reply([DefaultReplicationResponse(m) EXCEPT !.result = Failed], m)
                /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, waitForResponses,
                               crashedNodes, nodeVars, messageDrops>>
 
@@ -328,7 +335,8 @@ HandleReplicationResponse(m) ==
        /\ m.mtype = ReplicationResponse
        /\ IF req \in DOMAIN waitForResponses /\ rn \in waitForResponses[req] THEN
               \/ /\ m.result = Success
-                 /\ IF m.localCP > localCheckPoint[n][rn] THEN
+                 \* don't update local/global checkpoint if local checkpoint came from request with lower term
+                 /\ IF m.rterm >= currentTerm[n] /\ m.localCP > localCheckPoint[n][rn] THEN
                         LET newLocalCheckPoint == [localCheckPoint EXCEPT ![n][rn] = m.localCP]
                             rt == clusterStateOnNode[n].routingTable
                             computedGlobalCP == Min({newLocalCheckPoint[n][i] : i \in Assigned(rt)})
@@ -355,7 +363,7 @@ HandleReplicationResponse(m) ==
                           globalCheckPoint>>
        /\ messages' = messages \ {m}       
        /\ UNCHANGED <<nextClientValue, nextRequestId, crashedNodes, clusterStateOnNode, store, tlog,
-                      nextSeq, messageDrops>>
+                      nextSeq, messageDrops, currentTerm>>
                       
 
 DefaultTrimTranslogResponse(m) == [mtype     |-> TrimTranslogResponse,
@@ -366,25 +374,36 @@ DefaultTrimTranslogResponse(m) == [mtype     |-> TrimTranslogResponse,
                                    term      |-> m.term,
                                    result    |-> Success]
                                    
-ElementsToKeep(ntlog, maxseq, term) ==
-    {i \in DOMAIN ntlog : i <= maxseq \/ ntlog[i].term >= term}
+ElementsToKeep(ntlog, maxseq, minterm) ==
+    {i \in DOMAIN ntlog : i <= maxseq \/ ntlog[i].term >= minterm}
                                    
-TrimTlog(ntlog, maxseq, term) ==
-    [j \in ElementsToKeep(ntlog, maxseq, term) |-> ntlog[j]]
+TrimTlog(ntlog, maxseq, minterm) ==
+    [j \in ElementsToKeep(ntlog, maxseq, minterm) |-> ntlog[j]]
                               
 \* Trim translog request arrives on node n with message m
 HandleTrimTranslogRequest(m) ==
    LET n == m.mdest
-       currentTerm == clusterStateOnNode[n].primaryTerm
    IN  /\ n \notin crashedNodes
        /\ m.mtype = TrimTranslogRequest
-       /\ IF m.term >= currentTerm THEN
-              /\ tlog' = [tlog EXCEPT ![n] = TrimTlog(@, m.maxseq, m.term)]
-              /\ Reply(DefaultTrimTranslogResponse(m), m)
+       /\ IF m.term >= currentTerm[n] THEN
+              LET newGlobalCP == globalCheckPoint[n]
+                  gapsFilledTlog ==
+                  IF m.term > currentTerm[n] THEN
+                      \* there is a new primary in town, cannot safely advance local checkpoint before resync done
+                      \* take globalCP from replication request into account
+                      [tlog EXCEPT ![n] = FillGapsAndMarkSafe(@, newGlobalCP, FALSE)]
+                  ELSE
+                      tlog
+              IN  /\ tlog' = [gapsFilledTlog EXCEPT ![n] = TrimTlog(@, m.maxseq, m.term)]
+                  /\ currentTerm' = IF m.term > currentTerm[n] THEN
+                                        [currentTerm EXCEPT ![n] = m.term]
+                                    ELSE
+                                        currentTerm
+                  /\ Reply(DefaultTrimTranslogResponse(m), m)
           ELSE
               \* don't handle requests with lower term than we have
               /\ Reply([DefaultTrimTranslogResponse(m) EXCEPT !.result = Failed], m)
-              /\ UNCHANGED <<tlog>>
+              /\ UNCHANGED <<tlog, currentTerm>>
        /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, waitForResponses,
                       clusterStateOnNode, nextClientValue, nextRequestId, clientResponses,
                       crashedNodes, messageDrops, nextSeq, store, globalCheckPoint,
@@ -418,7 +437,7 @@ HandleTrimTranslogResponse(m) ==
                           globalCheckPoint>>
        /\ messages' = messages \ {m}       
        /\ UNCHANGED <<nextClientValue, nextRequestId, crashedNodes, clusterStateOnNode, store, tlog,
-                      nextSeq, messageDrops, clientResponses>>
+                      nextSeq, messageDrops, clientResponses, currentTerm>>
        
 CleanReplicationResponseToDeadNode(m) ==
     /\ m.mtype = ReplicationResponse
@@ -443,59 +462,58 @@ ApplyClusterStateFromMaster(n) ==
     /\ n \notin crashedNodes
     /\ clusterStateOnNode[n] /= clusterStateOnMaster
     /\ clusterStateOnNode' = [clusterStateOnNode EXCEPT ![n] = clusterStateOnMaster]
-    /\ IF AnotherNodeWasPromotedToPrimary(n, clusterStateOnMaster.routingTable,
-              clusterStateOnNode[n].routingTable) /\ clusterStateOnMaster.routingTable[n] = Replica THEN
-          \* do a quick resync from that node
-          LET newPrimary == ChoosePrimary(clusterStateOnMaster.routingTable)
-              newPrimaryStore == store[newPrimary]
-              newPrimaryTlog == tlog[newPrimary]
-              newPrimaryTerm == clusterStateOnNode[newPrimary].primaryTerm
-              existingDocumentKeys == {docId \in DOMAIN newPrimaryStore : newPrimaryStore[docId] /= Nil}
-              globalCP == Max({globalCheckPoint[n]} \cup {globalCheckPoint[newPrimary]}) 
-              \* globalCP == globalCheckPoint[n]
-              maxTlogPos == Max((DOMAIN newPrimaryTlog) \cup {0})
-              numDocs == maxTlogPos - globalCP
-              replRequests == {([mtype    |-> ReplicationRequest,
-                                 msource  |-> newPrimary,
-                                 mdest    |-> n,
-                                 req      |-> nextRequestId + i - 1,
-                                 seq      |-> globalCP + i,
-                                 rterm    |-> newPrimaryTerm, \* current term when issuing request
-                                 sterm    |-> IF (globalCP + i) \in DOMAIN newPrimaryTlog THEN
-                                                  newPrimaryTlog[globalCP + i].term
-                                              ELSE
-                                                  0,
-                                 id       |-> IF (globalCP + i) \in DOMAIN newPrimaryTlog THEN
-                                                  newPrimaryTlog[globalCP + i].id
-                                              ELSE
-                                                  Nil,
-                                 value    |-> IF (globalCP + i) \in DOMAIN newPrimaryTlog THEN
-                                                  newPrimaryTlog[globalCP + i].value
-                                              ELSE
-                                                  Nil, 
-                                 recovery |-> TRUE,
-                                 cut      |-> FALSE,
-                                 globalCP |-> globalCP]) : i \in 1..numDocs}
-                 trimRequest == [mtype    |-> TrimTranslogRequest,
-                                 msource  |-> newPrimary,
-                                 mdest    |-> n,
-                                 req      |-> nextRequestId + numDocs,
-                                 maxseq   |-> maxTlogPos,
-                                 term     |-> newPrimaryTerm]
-          IN  /\ messages' = messages \cup replRequests \cup {trimRequest}
-              /\ nextRequestId' = nextRequestId + numDocs + 1
-              /\ waitForResponses' = waitForResponses @@ [i \in nextRequestId..(nextRequestId+numDocs-1) |-> {n}] @@ ((nextRequestId+numDocs) :> {n})  
-              /\ tlog' = [tlog EXCEPT ![n] = FillGapsAndMarkSafe(@, globalCP, FALSE)]
-              /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = MaxGaplessSeq(tlog'[n])]
-              \* TODO reset global checkpoint marker here?
-       ELSE /\ IF NodeWasPromotedToPrimary(n, clusterStateOnMaster.routingTable, 
-                clusterStateOnNode[n].routingTable) THEN
-                    \* fill gaps in tlog
-                    tlog' = [tlog EXCEPT ![n] = FillGapsAndMarkSafe(@, globalCheckPoint[n], TRUE)]
-                    \* TODO advance local and global checkpoint marker here
-                ELSE
-                    UNCHANGED <<tlog>>                
-            /\ UNCHANGED <<nextRequestId, messages, waitForResponses, localCheckPoint>>
+    /\ currentTerm' = [currentTerm EXCEPT ![n] = Max({@, clusterStateOnMaster.primaryTerm})]
+    /\ IF NodeWasPromotedToPrimary(n, clusterStateOnMaster.routingTable,
+           clusterStateOnNode[n].routingTable) THEN
+            LET newPrimaryTlog == tlog[n]
+                globalCP == globalCheckPoint[n]
+                replicas == Replicas(clusterStateOnMaster.routingTable)
+                numReplicas == Cardinality(replicas)
+                maxTlogPos == Max((DOMAIN newPrimaryTlog) \cup {0})
+                numDocs == maxTlogPos - globalCP
+                replRequests == {([mtype    |-> ReplicationRequest,
+                             msource  |-> n,
+                             mdest    |-> rn,
+                             req      |-> nextRequestId + i - 1,
+                             seq      |-> globalCP + i,
+                             rterm    |-> currentTerm'[n], \* current term when issuing request
+                             sterm    |-> IF (globalCP + i) \in DOMAIN newPrimaryTlog THEN
+                                              newPrimaryTlog[globalCP + i].term
+                                          ELSE
+                                              0,
+                             id       |-> IF (globalCP + i) \in DOMAIN newPrimaryTlog THEN
+                                              newPrimaryTlog[globalCP + i].id
+                                          ELSE
+                                              Nil,
+                             value    |-> IF (globalCP + i) \in DOMAIN newPrimaryTlog THEN
+                                              newPrimaryTlog[globalCP + i].value
+                                          ELSE
+                                              Nil,
+                             recovery |-> TRUE,
+                             cut      |-> FALSE,
+                             globalCP |-> globalCP]) : i \in 1..numDocs, rn \in replicas}
+                  trimRequests == {[mtype    |-> TrimTranslogRequest,
+                                    msource  |-> n,
+                                    mdest    |-> rn,
+                                    req      |-> nextRequestId + numDocs,
+                                    maxseq   |-> maxTlogPos,
+                                    term     |-> currentTerm'[n]] : rn \in replicas}
+             IN  \* fill gaps in tlog
+                 /\ tlog' = [tlog EXCEPT ![n] = FillGapsAndMarkSafe(@, globalCheckPoint[n], TRUE)]
+                 \* reset local checkpoint for other nodes and calculate new one for current node
+                 /\ localCheckPoint' = [localCheckPoint EXCEPT ![n] = [[n2 \in Nodes |-> 0] EXCEPT ![n] = MaxGaplessSeq(tlog'[n])]]
+                 \* TODO advance global checkpoint marker here
+                 /\ messages' = messages \cup replRequests \cup trimRequests
+                 /\ nextRequestId' = nextRequestId + (numReplicas * (numDocs + 1))
+                 /\ waitForResponses' = waitForResponses @@ 
+                                            [i \in nextRequestId..(nextRequestId+numDocs-1) |-> replicas] @@
+                                            ((nextRequestId+numDocs) :> replicas) 
+      ELSE
+          /\ IF  clusterStateOnMaster.routingTable[n] = Replica /\ clusterStateOnMaster.primaryTerm > currentTerm[n] THEN
+                 tlog' = [tlog EXCEPT ![n] = FillGapsAndMarkSafe(@, globalCheckPoint[n], FALSE)]
+             ELSE
+                 UNCHANGED <<tlog>>
+          /\ UNCHANGED <<localCheckPoint, messages, nextRequestId, waitForResponses>>
     /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextSeq, clientVars, store,
                    globalCheckPoint, messageDrops>>
                    
@@ -517,7 +535,7 @@ CrashNode(n) ==
 \* Drop replication request message    
 DropReplicationRequestMessage(m) ==
     /\ m.mtype = ReplicationRequest
-    /\ Reply([DefaultResponse(m) EXCEPT !.result = Failed], m)
+    /\ Reply([DefaultReplicationResponse(m) EXCEPT !.result = Failed], m)
     /\ messageDrops' = messageDrops + 1
     /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, waitForResponses, clientVars,
                    nodeVars>>
@@ -635,17 +653,6 @@ AllAckedResponsesStored ==
 
 WellformedRoutingTable(routingTable) == Cardinality(Primaries(routingTable)) <= 1
 WellformedClusterState(clusterState) == WellformedRoutingTable(clusterState.routingTable) 
-
-
-\* don't explore states where replica has applied cluster state but primary has not
-OnlyStatesWherePrimaryAppliesCSbeforeReplica ==
-    \A n1, n2 \in Nodes :
-        (/\ n1 /= n2
-         /\ n1 \notin crashedNodes
-         /\ n2 \notin crashedNodes
-         /\ clusterStateOnMaster.routingTable[n1] = Primary
-         /\ clusterStateOnNode[n1] /= clusterStateOnMaster)
-        => clusterStateOnNode[n2] /= clusterStateOnMaster
 
 \* does not hold if NodeFaultDetectionKicksNodeOut rule is enabled
 MaxOneNodeThinksItIsPrimary ==
