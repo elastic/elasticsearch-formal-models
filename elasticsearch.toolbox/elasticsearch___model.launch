@@ -18,7 +18,7 @@
 <stringAttribute key="modelBehaviorNext" value="Next"/>
 <stringAttribute key="modelBehaviorSpec" value="Spec"/>
 <intAttribute key="modelBehaviorSpecType" value="2"/>
-<stringAttribute key="modelBehaviorVars" value="nextClientValue, clusterStateOnMaster, globalCheckPoint, tlog, messages, store, clientResponses, crashedNodes, waitForResponses, messageDrops, clusterStateOnNode, nextRequestId, nextSeq, localCheckPoint"/>
+<stringAttribute key="modelBehaviorVars" value="nextClientValue, clusterStateOnMaster, globalCheckPoint, tlog, messages, store, clientResponses, crashedNodes, waitForResponses, messageDrops, currentTerm, clusterStateOnNode, nextRequestId, nextSeq, localCheckPoint"/>
 <stringAttribute key="modelComments" value=""/>
 <booleanAttribute key="modelCorrectnessCheckDeadlock" value="false"/>
 <listAttribute key="modelCorrectnessInvariants">
@@ -37,8 +37,6 @@
 <stringAttribute key="modelExpressionEval" value=""/>
 <stringAttribute key="modelParameterActionConstraint" value=""/>
 <listAttribute key="modelParameterConstants">
-<listEntry value="ReplicationResponse;;ReplicationResponse;1;0"/>
-<listEntry value="ReplicationRequest;;ReplicationRequest;1;0"/>
 <listEntry value="Primary;;Primary;1;0"/>
 <listEntry value="Replica;;Replica;1;0"/>
 <listEntry value="Unassigned;;Unassigned;1;0"/>
@@ -48,8 +46,10 @@
 <listEntry value="Success;;Success;1;0"/>
 <listEntry value="Failed;;Failed;1;0"/>
 <listEntry value="InitialClusterStates;;{[ routingTable |-&gt; [n1 |-&gt; Primary, n2 |-&gt; Replica, n3 |-&gt; Replica],&#10;  primaryTerm |-&gt; 1 ]};0;0"/>
-<listEntry value="TrimTranslogResponse;;TrimTranslogResponse;1;0"/>
-<listEntry value="TrimTranslogRequest;;TrimTranslogRequest;1;0"/>
+<listEntry value="Response;;Response;1;0"/>
+<listEntry value="Request;;Request;1;0"/>
+<listEntry value="Replication;;Replication;1;0"/>
+<listEntry value="TrimTranslog;;TrimTranslog;1;0"/>
 </listAttribute>
 <stringAttribute key="modelParameterContraint" value="messageDrops &lt;= 1 /\ nextClientValue &lt;= 3 /\ Cardinality(crashedNodes) &lt;= 1 /\ &quot;n3&quot; \notin crashedNodes"/>
 <listAttribute key="modelParameterDefinitions"/>
