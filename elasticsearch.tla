@@ -54,10 +54,9 @@ clientVars == <<nextClientValue, clientResponses>>
 \* (this is just an natural number that we increment on each new client operation)
 VARIABLE nextRequestId
 
-\* map from request id to set of nodes we are waiting a response for. This is used e.g. when we
-\* replicate an index request to two replicas and want to ensure that we only respond to the client
-\* once both replicas have replied (see also nextRequestId)
-VARIABLE waitForResponses
+\* map from request id to flag that determines if the request was successfully replicated.
+\* Possible values {TRUE, FALSE, Nil}. The special value Nil means that outcome is not decided yet.
+VARIABLE replicationStatus
 
 \* set of crashed nodes (used to denote a physical crash of the node)
 VARIABLE crashedNodes
@@ -108,6 +107,40 @@ Max(s) == CHOOSE x \in s : \A y \in s : x >= y
 Reply(response, request) ==
     messages' = {response} \cup (messages \ {request})
 
+\* Set of in-flight messages for the given node and request id
+InflightRequestsFromNode(req, n, msgs) ==
+    {m \in msgs : m.req = req /\ ((m.mtype = Request /\ m.msource = n) \/ (m.mtype = Response /\ m.mdest = n))}
+
+DefaultReplicationResponse(m) == [mtype     |-> Response,
+                                  mmethod   |-> m.mmethod,
+                                  msource   |-> m.mdest,
+                                  mdest     |-> m.msource,
+                                  req       |-> m.req,
+                                  id        |-> m.id,
+                                  seq       |-> m.seq,
+                                  rterm     |-> m.rterm,
+                                  sterm     |-> m.sterm,
+                                  value     |-> m.value,
+                                  internal  |-> m.internal,
+                                  localCP   |-> 0,
+                                  result    |-> Success]
+
+DefaultTrimTranslogResponse(m) == [mtype     |-> Response,
+                                   mmethod   |-> m.mmethod,
+                                   msource   |-> m.mdest,
+                                   mdest     |-> m.msource,
+                                   req       |-> m.req,
+                                   maxseq    |-> m.maxseq,
+                                   term      |-> m.term,
+                                   internal  |-> m.internal,
+                                   result    |-> Success]
+
+DefaultResponse(m) ==
+    IF m.mmethod = Replication THEN
+        DefaultReplicationResponse(m)
+    ELSE
+        DefaultTrimTranslogResponse(m)
+
 ----
 \* Helper functions on routing table
 Primaries(routingTable) == {n \in Nodes : routingTable[n] = Primary}
@@ -150,7 +183,50 @@ RerouteWithFailedShard(n, cs) ==
                                       [rt EXCEPT ![n] = Unassigned]
             IN  [clusterStateOnMaster EXCEPT
                     !.routingTable = newRoutingTable,
-                    !.primaryTerm  = newPrimaryTerm] 
+                    !.primaryTerm  = newPrimaryTerm]
+                    
+----
+\* Helper functions on translog
+
+\* Whether position in the translog is safe to advance local checkpoint
+SafeTlogPosition(ntlog, i) ==
+    i \in DOMAIN ntlog /\ ntlog[i].safe
+
+\* Yields highest sequence number without gaps in translog, yields 0 if no such number exists
+MaxGaplessSeq(ntlog) ==
+    LET domWithZero == DOMAIN ntlog \cup {0}
+    IN  CHOOSE i \in domWithZero :
+        /\ SafeTlogPosition(ntlog, i+1) = FALSE
+        /\ \A j \in 1..i : SafeTlogPosition(ntlog, j)
+
+\* Fill gaps in translog and set safety marker "safe" for values at position strictly larger than "from"
+FillGapsAndMarkSafe(ntlog, from, safe) ==
+    [j \in 1..Max(DOMAIN ntlog \cup {0}) |->
+        IF  j \in DOMAIN ntlog THEN
+            IF j > from THEN
+                [ntlog[j] EXCEPT !.safe = safe]
+            ELSE
+                ntlog[j]
+        ELSE
+            [id    |-> Nil,
+             term  |-> 0,
+             value |-> Nil,
+             safe  |-> safe]]
+
+\* Mark translog entries safe to advance local checkpoint up to position "to" included.
+MarkSafeUpTo(ntlog, to) ==
+    [j \in DOMAIN ntlog |->
+        IF j <= to THEN
+            [ntlog[j] EXCEPT !.safe = TRUE]
+        ELSE
+            ntlog[j]]
+
+ElementsToKeep(ntlog, maxseq, minterm) ==
+    {i \in DOMAIN ntlog : i <= maxseq \/ ntlog[i].term >= minterm}
+
+\* Trim elements from translog with position strictly greater than maxseq and term strictly lower than minterm
+TrimTlog(ntlog, maxseq, minterm) ==
+    [j \in ElementsToKeep(ntlog, maxseq, minterm) |-> ntlog[j]]
 
 ----
 \* Define initial values for all variables
@@ -169,23 +245,12 @@ Init == /\ messages = {}
         /\ nextClientValue = 1
         /\ clientResponses = {}
         /\ nextRequestId = 1
-        /\ waitForResponses = << >>
+        /\ replicationStatus = << >>
         /\ InitNodesVars
         /\ messageDrops = 0
 
 ----
 \* Define next step relation
-
-
-ValidEntry(ntlog, i) ==
-    i \in DOMAIN ntlog /\ ntlog[i].safe
-
-\* Highest sequence number without gaps in translog, yields 0 if no such number exists
-MaxGaplessSeq(ntlog) ==
-    LET domWithZero == DOMAIN ntlog \cup {0}
-    IN  CHOOSE i \in domWithZero :
-        /\ ValidEntry(ntlog, i+1) = FALSE
-        /\ \A j \in 1..i : ValidEntry(ntlog, j)
 
 \* Index request arrives on node n with document id docId
 ClientRequest(n, docId) ==
@@ -209,7 +274,7 @@ ClientRequest(n, docId) ==
                                      sterm    |-> primaryTerm, \* term to be stored
                                      id       |-> docId,
                                      value    |-> nextClientValue,
-                                     recovery |-> FALSE,
+                                     internal |-> FALSE,
                                      globalCP |-> globalCheckPoint[n]]) : rn \in Replicas(routingTable)}
               IN  /\ store' = [store EXCEPT ![n][docId] = storeEntry]
                   /\ tlog' = [tlog EXCEPT ![n] = @ @@ (nextSeq[n] :> tlogEntry)]
@@ -220,61 +285,18 @@ ClientRequest(n, docId) ==
                   \* generate unique key for replication requests so that we can relate responses
                   /\ nextRequestId' = nextRequestId + 1
                   /\ messages' = messages \cup replRequests
-                  /\ waitForResponses' = waitForResponses @@ (nextRequestId :> Replicas(routingTable))
-    /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, clientResponses, crashedNodes,
+                  /\ IF Cardinality(Replicas(routingTable)) = 0 THEN
+                         /\ clientResponses' = clientResponses \cup {[id    |-> docId,
+                                                                   value |-> nextClientValue,
+                                                                   seq   |-> nextSeq[n],
+                                                                   term  |-> primaryTerm]}
+                         /\ replicationStatus' = replicationStatus @@ (nextRequestId :> TRUE)
+                     ELSE
+                         /\ replicationStatus' = replicationStatus @@ (nextRequestId :> Nil)
+                         /\ UNCHANGED <<clientResponses>>
+    /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, crashedNodes,
                    globalCheckPoint, messageDrops, currentTerm>>
-    
-
-DefaultReplicationResponse(m) == [mtype     |-> Response,
-                                  mmethod   |-> m.mmethod,
-                                  msource   |-> m.mdest,
-                                  mdest     |-> m.msource,
-                                  req       |-> m.req,
-                                  id        |-> m.id,
-                                  seq       |-> m.seq,
-                                  rterm     |-> m.rterm,
-                                  sterm     |-> m.sterm,
-                                  value     |-> m.value,
-                                  recovery  |-> m.recovery,
-                                  localCP   |-> 0,
-                                  result    |-> Success]
-
-DefaultTrimTranslogResponse(m) == [mtype     |-> Response,
-                                   mmethod   |-> m.mmethod,
-                                   msource   |-> m.mdest,
-                                   mdest     |-> m.msource,
-                                   req       |-> m.req,
-                                   maxseq    |-> m.maxseq,
-                                   term      |-> m.term,
-                                   result    |-> Success]
-
-DefaultResponse(m) ==
-    IF m.mmethod = Replication THEN
-        DefaultReplicationResponse(m)
-    ELSE
-        DefaultTrimTranslogResponse(m)
                        
-FillGapsAndMarkSafe(ntlog, from, safe) ==
-    [j \in 1..Max(DOMAIN ntlog \cup {0}) |-> 
-        IF  j \in DOMAIN ntlog THEN
-            IF j > from THEN
-                [ntlog[j] EXCEPT !.safe = safe]
-            ELSE
-                ntlog[j]
-        ELSE
-            [id    |-> Nil,
-             term  |-> 0,
-             value |-> Nil,
-             safe  |-> safe]]
-             
-MarkSafeUpTo(ntlog, to) ==
-    [j \in DOMAIN ntlog |-> 
-        IF j <= to THEN
-            [ntlog[j] EXCEPT !.safe = TRUE]
-        ELSE
-            ntlog[j]]
-
-
 \* Replication request arrives on node n with message m
 HandleReplicationRequest(m) ==
    LET n == m.mdest
@@ -323,39 +345,43 @@ HandleReplicationRequest(m) ==
                       /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = localCP]
                       /\ Reply([DefaultReplicationResponse(m) EXCEPT !.localCP = localCP], m)
                /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, nextClientValue, nextRequestId,
-                              clientResponses, waitForResponses, crashedNodes, messageDrops>>
+                              clientResponses, crashedNodes, messageDrops, replicationStatus>>
            ELSE
                \* don't replicate entries with lower term than we have
                /\ Reply([DefaultReplicationResponse(m) EXCEPT !.result = Failed], m)
-               /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, waitForResponses,
-                              crashedNodes, nodeVars, messageDrops>>
+               /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars,
+                              replicationStatus, crashedNodes, nodeVars, messageDrops>>
+
+FinishIfNeeded(m) ==
+    IF InflightRequestsFromNode(m.req, m.mdest, messages) = {m} THEN
+        /\ replicationStatus' = [replicationStatus EXCEPT ![m.req] = TRUE]
+        /\ IF m.internal = FALSE THEN
+               \* last response, answer client
+               clientResponses' = clientResponses \cup {[id    |-> m.id,
+                                                         value |-> m.value,
+                                                         seq   |-> m.seq,
+                                                         term  |-> m.rterm]}
+           ELSE
+               UNCHANGED <<clientResponses>>
+     ELSE
+         UNCHANGED <<clientResponses, replicationStatus>>
+
+FinishAsFailed(m) ==
+    /\ replicationStatus' = [replicationStatus EXCEPT ![m.req] = FALSE]
+    /\ UNCHANGED <<clientResponses>>
 
 \* Replication response arrives on node n with message m
 HandleReplicationResponse(m) ==
    LET n == m.mdest
        req == m.req
        rn == m.msource
-       finishIfNeeded ==
-                /\  waitForResponses' = [waitForResponses EXCEPT ![req] = @ \ {rn}]
-                /\  IF m.recovery = FALSE /\ waitForResponses[req] = {rn} THEN
-                         \* last response, answer client
-                         clientResponses' = clientResponses \cup {[id    |-> m.id,
-                                                                   value |-> m.value,
-                                                                   seq   |-> m.seq,
-                                                                   term  |-> m.rterm]}
-                    ELSE
-                         UNCHANGED <<clientResponses>>
-       finishAsFailed ==
-                /\ waitForResponses' = [waitForResponses EXCEPT ![req] = {}]
-                /\ UNCHANGED <<clientResponses>>
    IN  /\ n \notin crashedNodes
-       /\ clusterStateOnNode[n].routingTable[n] /= Unassigned \* handled by CleanReplicationResponseToDeadNode
        /\ m.mtype = Response
        /\ m.mmethod = Replication
-       /\ IF req \in DOMAIN waitForResponses /\ rn \in waitForResponses[req] THEN
+       /\ IF replicationStatus[req] = Nil THEN
               \/ /\ m.result = Success
                  \* don't update local/global checkpoint if local checkpoint came from request with lower term
-                 /\ IF m.rterm >= currentTerm[n] /\ m.localCP > localCheckPoint[n][rn] THEN
+                 /\ IF m.rterm >= currentTerm[n] /\ m.localCP > localCheckPoint[n][rn] /\ clusterStateOnNode[n].routingTable[n] /= Unassigned THEN
                         LET newLocalCheckPoint == [localCheckPoint EXCEPT ![n][rn] = m.localCP]
                             rt == clusterStateOnNode[n].routingTable
                             computedGlobalCP == Min({newLocalCheckPoint[n][i] : i \in Assigned(rt)})
@@ -366,31 +392,25 @@ HandleReplicationResponse(m) ==
                     ELSE
                         UNCHANGED <<localCheckPoint, globalCheckPoint>> 
                  /\ UNCHANGED <<clusterStateOnMaster>>
-                 /\ finishIfNeeded
+                 /\ FinishIfNeeded(m)
               \/ /\ m.result = Failed
                  /\ IF m.rterm < clusterStateOnMaster.primaryTerm THEN
                       \* term outdated, fail itself and don't ack client write
-                      /\ finishAsFailed
+                      /\ FinishAsFailed(m)
                       /\ UNCHANGED <<clusterStateOnMaster>>
                     ELSE
                       \* fail shard and respond to client
                       /\ clusterStateOnMaster' = RerouteWithFailedShard(rn, clusterStateOnMaster)
-                      /\ finishIfNeeded
+                      /\ FinishIfNeeded(m)
                  /\ UNCHANGED <<localCheckPoint, globalCheckPoint>>
           ELSE
-              UNCHANGED <<clusterStateOnMaster, clientResponses, waitForResponses, localCheckPoint,
+              UNCHANGED <<clusterStateOnMaster, clientResponses, replicationStatus, localCheckPoint,
                           globalCheckPoint>>
        /\ messages' = messages \ {m}       
        /\ UNCHANGED <<nextClientValue, nextRequestId, crashedNodes, clusterStateOnNode, store, tlog,
                       nextSeq, messageDrops, currentTerm>>
 
                                    
-ElementsToKeep(ntlog, maxseq, minterm) ==
-    {i \in DOMAIN ntlog : i <= maxseq \/ ntlog[i].term >= minterm}
-                                   
-TrimTlog(ntlog, maxseq, minterm) ==
-    [j \in ElementsToKeep(ntlog, maxseq, minterm) |-> ntlog[j]]
-                              
 \* Trim translog request arrives on node n with message m
 HandleTrimTranslogRequest(m) ==
    LET n == m.mdest
@@ -416,60 +436,47 @@ HandleTrimTranslogRequest(m) ==
               \* don't handle requests with lower term than we have
               /\ Reply([DefaultTrimTranslogResponse(m) EXCEPT !.result = Failed], m)
               /\ UNCHANGED <<tlog, currentTerm>>
-       /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, waitForResponses,
+       /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars,
                       clusterStateOnNode, nextClientValue, nextRequestId, clientResponses,
                       crashedNodes, messageDrops, nextSeq, store, globalCheckPoint,
-                      localCheckPoint>>
+                      localCheckPoint, replicationStatus>>
                              
 \* Trim translog response arrives on node n with message m
 HandleTrimTranslogResponse(m) ==
    LET n == m.mdest
        req == m.req
        rn == m.msource
-       finishIfNeeded == waitForResponses' = [waitForResponses EXCEPT ![req] = @ \ {rn}]
-       finishAsFailed == waitForResponses' = [waitForResponses EXCEPT ![req] = {}]
    IN  /\ n \notin crashedNodes
        /\ m.mtype = Response
        /\ m.mmethod = TrimTranslog
-       /\ IF req \in DOMAIN waitForResponses /\ rn \in waitForResponses[req] THEN
+       /\ IF replicationStatus[req] = Nil THEN
               \/ /\ m.result = Success
-                 /\ finishIfNeeded
+                 /\ FinishIfNeeded(m)
                  /\ UNCHANGED <<clusterStateOnMaster, localCheckPoint, globalCheckPoint>>
               \/ /\ m.result = Failed
                  /\ IF m.term < clusterStateOnMaster.primaryTerm THEN
                         \* term outdated, fail itself
-                        /\ finishAsFailed
+                        /\ FinishAsFailed(m)
                         /\ UNCHANGED <<clusterStateOnMaster>>
                     ELSE
                         \* fail shard
                         /\ clusterStateOnMaster' = RerouteWithFailedShard(rn, clusterStateOnMaster)
-                        /\ finishIfNeeded
+                        /\ FinishIfNeeded(m)
                  /\ UNCHANGED <<localCheckPoint, globalCheckPoint>>
           ELSE
-              UNCHANGED <<clusterStateOnMaster, clientResponses, waitForResponses, localCheckPoint,
+              UNCHANGED <<clusterStateOnMaster, clientResponses, replicationStatus, localCheckPoint,
                           globalCheckPoint>>
        /\ messages' = messages \ {m}       
        /\ UNCHANGED <<nextClientValue, nextRequestId, crashedNodes, clusterStateOnNode, store, tlog,
                       nextSeq, messageDrops, clientResponses, currentTerm>>
        
-CleanReplicationResponseToDeadNode(m) ==
+CleanResponseToDeadNode(m) ==
     /\ m.mtype = Response
-    /\ m.mmethod = Replication
-    /\ \/ m.mdest \in crashedNodes
-       \/ clusterStateOnNode[m.mdest].routingTable[m.mdest] = Unassigned
+    /\ m.mdest \in crashedNodes
     /\ messages' = messages \ {m}
-    /\ waitForResponses' = [waitForResponses EXCEPT ![m.req] = @ \ {m.msource}]
+    /\ replicationStatus' = [replicationStatus EXCEPT ![m.req] = FALSE]
     /\ UNCHANGED <<clusterStateOnMaster, clientResponses, nextClientValue, nextRequestId, nodeVars,
                    crashedNodes, messageDrops>>
-
-FillGaps(ntlog) ==
-    [j \in 1..Max(DOMAIN ntlog \cup {0}) |-> 
-        IF  j \in DOMAIN ntlog THEN
-            ntlog[j]
-        ELSE
-            [id    |-> Nil,
-             term  |-> 0,
-             value |-> Nil]]
 
 \* Cluster state propagated from master is applied to node n
 ApplyClusterStateFromMaster(n) ==
@@ -504,8 +511,7 @@ ApplyClusterStateFromMaster(n) ==
                                                     newPrimaryTlog[globalCP + i].value
                                                 ELSE
                                                     Nil,
-                                   recovery |-> TRUE,
-                                   cut      |-> FALSE,
+                                   internal |-> TRUE,
                                    globalCP |-> globalCP]) : i \in 1..numDocs, rn \in replicas}
                   trimRequests == {[mtype    |-> Request,
                                     mmethod  |-> TrimTranslog,
@@ -513,7 +519,8 @@ ApplyClusterStateFromMaster(n) ==
                                     mdest    |-> rn,
                                     req      |-> nextRequestId + numDocs,
                                     maxseq   |-> maxTlogPos,
-                                    term     |-> currentTerm'[n]] : rn \in replicas}
+                                    term     |-> currentTerm'[n],
+                                    internal |-> TRUE] : rn \in replicas}
              IN  \* fill gaps in tlog
                  /\ tlog' = [tlog EXCEPT ![n] = FillGapsAndMarkSafe(@, globalCheckPoint[n], TRUE)]
                  \* reset local checkpoint for other nodes and calculate new one for current node
@@ -521,31 +528,34 @@ ApplyClusterStateFromMaster(n) ==
                  \* TODO advance global checkpoint marker here
                  /\ messages' = messages \cup replRequests \cup trimRequests
                  /\ nextRequestId' = nextRequestId + (numReplicas * (numDocs + 1))
-                 /\ waitForResponses' = waitForResponses @@ 
-                                            [i \in nextRequestId..(nextRequestId+numDocs-1) |-> replicas] @@
-                                            ((nextRequestId+numDocs) :> replicas) 
+                 /\ IF replicas = {} THEN
+                        UNCHANGED <<replicationStatus>>
+                    ELSE
+                        replicationStatus' = replicationStatus @@
+                                            [i \in nextRequestId..(nextRequestId+numDocs-1) |-> Nil] @@
+                                            ((nextRequestId+numDocs) :> Nil)
       ELSE
           /\ IF  clusterStateOnMaster.routingTable[n] = Replica /\ clusterStateOnMaster.primaryTerm > currentTerm[n] THEN
                  tlog' = [tlog EXCEPT ![n] = FillGapsAndMarkSafe(@, globalCheckPoint[n], FALSE)]
              ELSE
                  UNCHANGED <<tlog>>
-          /\ UNCHANGED <<localCheckPoint, messages, nextRequestId, waitForResponses>>
+          /\ UNCHANGED <<localCheckPoint, messages, nextRequestId, replicationStatus>>
     /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextSeq, clientVars, store,
                    globalCheckPoint, messageDrops>>
                    
 \* Node fault detection on master finds node n to be isolated from the cluster
 NodeFaultDetectionKicksNodeOut(n) ==
     /\ n \notin crashedNodes
-    /\ clusterStateOnMaster.routingTable[n] /= Unassigned
+    /\ clusterStateOnMaster.routingTable[n] /= Unassigned \* not already unassigned
     /\ clusterStateOnMaster' = RerouteWithFailedShard(n, clusterStateOnMaster)
-    /\ UNCHANGED <<crashedNodes, messages, nextRequestId, waitForResponses, clientVars, nodeVars, messageDrops>>
+    /\ UNCHANGED <<crashedNodes, messages, nextRequestId, replicationStatus, clientVars, nodeVars, messageDrops>>
 
     
 \* Node n crashes        
 CrashNode(n) ==
     /\ n \notin crashedNodes
     /\ crashedNodes' = crashedNodes \cup {n}
-    /\ UNCHANGED <<clusterStateOnMaster, messages, clientVars, nextRequestId, waitForResponses,
+    /\ UNCHANGED <<clusterStateOnMaster, messages, clientVars, nextRequestId, replicationStatus,
                    nodeVars, messageDrops>>
 
 \* Drop request message    
@@ -553,7 +563,7 @@ DropRequestMessage(m) ==
     /\ m.mtype = Request
     /\ Reply([DefaultResponse(m) EXCEPT !.result = Failed], m)
     /\ messageDrops' = messageDrops + 1
-    /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, waitForResponses, clientVars,
+    /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, replicationStatus, clientVars,
                    nodeVars>>
 
 \* Drop response message
@@ -562,14 +572,14 @@ DropResponseMessage(m) ==
     /\ m.result = Success
     /\ Reply([m EXCEPT !.result = Failed], m)
     /\ messageDrops' = messageDrops + 1
-    /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, waitForResponses, clientVars,
+    /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, replicationStatus, clientVars,
                    nodeVars>>
 
 \* Master removes crashed node n from its cluster state
 RemoveCrashedNodeFromClusterState(n) ==
     /\ n \in crashedNodes
     /\ clusterStateOnMaster' = RerouteWithFailedShard(n, clusterStateOnMaster)
-    /\ UNCHANGED <<crashedNodes, messages, nextRequestId, waitForResponses, clientVars, nodeVars, messageDrops>>
+    /\ UNCHANGED <<crashedNodes, messages, nextRequestId, replicationStatus, clientVars, nodeVars, messageDrops>>
 
 \* Defines how the variables may transition.
 Next == \/ \E n \in Nodes : \E docId \in DocumentIds : ClientRequest(n, docId)
@@ -577,27 +587,31 @@ Next == \/ \E n \in Nodes : \E docId \in DocumentIds : ClientRequest(n, docId)
         \/ \E m \in messages : HandleReplicationResponse(m)
         \/ \E m \in messages : HandleTrimTranslogRequest(m)
         \/ \E m \in messages : HandleTrimTranslogResponse(m)
-        \/ \E m \in messages : CleanReplicationResponseToDeadNode(m)
+        \/ \E m \in messages : CleanResponseToDeadNode(m)
         \/ \E m \in messages : DropRequestMessage(m)
         \/ \E m \in messages : DropResponseMessage(m)
         \/ \E n \in Nodes : ApplyClusterStateFromMaster(n)
         \/ \E n \in Nodes : CrashNode(n)
         \/ \E n \in Nodes : RemoveCrashedNodeFromClusterState(n)
-        \* \/ \E n \in Nodes : NodeFaultDetectionKicksNodeOut(n)
+        \/ \E n \in Nodes : NodeFaultDetectionKicksNodeOut(n)
 
 ----
 \* Helper functions / relations for making assertions
 
-
+\* shard that is considered active by the master
 ActiveShard(n) ==
     clusterStateOnMaster.routingTable[n] /= Unassigned
 
+\* everything in the translog up to i included
 UpToPoint(ntlog, i) ==
     [j \in 1..i |-> ntlog[j]]
-    
+
+\* copy of translog, where we assume all entries are marked safe
 ExceptSafe(ntlog) ==
     [j \in DOMAIN ntlog |-> [ntlog[j] EXCEPT !.safe = TRUE]]
-    
+
+\* checks if the translog for all nodes are equivalent up to their global checkpoint, only differing
+\* in the safe marker (which can be false sometimes if global checkpoint on one shard is lower than on another one)
 SameTranslogUpToGlobalCheckPoint ==
     \A n1, n2 \in Nodes: n1 /= n2 /\ ActiveShard(n1) /\ ActiveShard(n2) =>
         ExceptSafe(UpToPoint(tlog[n1], globalCheckPoint[n1])) = ExceptSafe(UpToPoint(tlog[n2], globalCheckPoint[n1]))
@@ -611,20 +625,8 @@ AllCopiesSameContents ==
 \* no active messages        
 NoActiveMessages == messages = {}
 
-\* for each replication request/response there must be a corresponding entry in waitForResponses
-\* except if this already lead to a shard failure
-CorrespondingResponses ==
-    /\ \A m \in messages :
-           m.mtype = Response =>
-               m.msource \in waitForResponses[m.req] \/ clusterStateOnMaster.routingTable[m.mdest] = Unassigned 
-    /\ \A m \in messages :
-           m.mtype = Request =>
-               m.mdest \in waitForResponses[m.req] \/ clusterStateOnMaster.routingTable[m.msource] = Unassigned
-
-NotTooManyResponses ==
-    \A n \in Nodes : \A r \in DOMAIN waitForResponses : n \in waitForResponses[r] =>
-        \E m \in messages : \/ m.mtype = Request /\ m.mdest \in waitForResponses[m.req]
-                            \/ m.mtype = Response /\ m.msource \in waitForResponses[m.req]
+ReplicationStatusDeterminedAfterNoMessages == NoActiveMessages =>
+    \A req \in DOMAIN replicationStatus : replicationStatus[req] = TRUE \/ replicationStatus[req] = FALSE
 
 \* cluster state on master has been applied to non-crashed nodes
 ClusterStateAppliedOnAllNodes ==
