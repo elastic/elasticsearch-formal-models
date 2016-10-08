@@ -2,26 +2,26 @@
 TLA+ Model of the Elasticsearch data replication approach ^'
 -------------------------------------------------------------------------------------
 
-This file gives a formal specification of the data replication approach in Elasticsearch. An index,
-which is a collection of documents, is often sharded into multiple pieces that can, invidiually, be
-stored on single machines whereas the compound index might not fit in its entirety on a machine.
-To ensure high availability and scale out read access, shards are usually also replicated onto
-multiple machines. The main copy is called the primary, all other copies are simply called replicas.
-The number of primary shards for an index is fixed at creation time, which allows to
-deterministically route requests for specific documents to the right shard, based on a hash of the
-document key (called the document "_id"). In the context of data replication, shards do their work
-independently from each other. The specification therefore only considers a single primary shard
-together with its copies, the replicas. It assumes a fixed set of nodes, each of which can host
-either the primary or one of the replicas. Shard allocation (i.e. which node has which shard) is
-dynamic and determined by the master, a process in the cluster that is backed by a consensus module.
-The TLA+ specification does not model the consensus module, it assumes that this component is
-working correctly. It shows however how data replication integrates with the consensus module to
-achieve its guarantees.
+This file gives a formal specification of the data replication model in Elasticsearch. An index, 
+which is a collection of documents, can be divided into multiple pieces, known as shards, each of 
+which can be stored on different machines. This approach of horizontal scaling enables Elasticsearch 
+to store much larger indices than could fit on a single machine. To ensure high availability and 
+scale out read access, shards are usually also replicated onto multiple machines. The main copy 
+is called the primary, all other copies are simply called replicas. The number of primary shards 
+for an index is fixed at creation time, which allows to deterministically route requests for specific 
+documents to the right shard, based on a hash of the document key (called the document "_id"). In the 
+context of data replication, shards do their work independently from each other. The specification 
+therefore only considers a single primary shard together with its copies, the replicas. It assumes a 
+fixed set of nodes, each of which can host either the primary or one of the replicas. Shard allocation 
+(i.e. which node has which shard) is dynamic and determined by the master, a process in the cluster 
+that is backed by a consensus module. The TLA+ specification does not model the consensus module, it 
+assumes that this component is working correctly. It shows however how data replication integrates with 
+the consensus module to achieve its guarantees.
 
-Quick overview of the data replication
---------------------------------------
+Quick overview of the data replication model
+--------------------------------------------
 
-Clients send requests to an arbitrary node of the cluster. The node then routes the request to the
+Clients send requests to an arbitrary node in the cluster. The node then routes the request to the
 node in the cluster that has the primary shard for the corresponding document id. The document is
 indexed at the primary and then replicated concurrently to the replicas. The replicas index the
 document and confirm successful replication to the primary. The primary then acknowledges successful
@@ -37,8 +37,8 @@ Failures covered by the model:
 
 Also covered:
 
-- cluster state batching / asynchronous application (each node applies CS at different times)
-- network delays: Messages can arrive out-of-order and be arbitrarily delayed
+- cluster state batching / asynchronous application (each node applies the cluster state at different times)
+- network delays: messages can arrive out-of-order and be arbitrarily delayed
 
 
 Limitations:
@@ -48,6 +48,9 @@ When a shard fails, it is not reallocated / reassigned to another node but stays
 When a primary shard fails, a random replica is promoted to primary (if replica exists).
 - only the transaction log is modeled. Lucene store as an optimistic consumer of the transaction log
 is not modeled.
+- adding nodes to the cluster is not modeled, whereas in Elasticsearch, nodes can arbitrarily 
+be added to the cluster and those nodes will share in the hosting of shard data (shard data is 
+moved to the new node through the process of recovery, mentioned above, which is also not modeled).
 
 Divergence from current Java implementation:
 
@@ -88,7 +91,7 @@ CONSTANTS DocumentIds
       source    |-> n1,
       dest      |-> n2]
 
-  Responses also have a field "success" which contains the information if the call was successful
+  Responses also have a field "success" which indicates whether the call was successful
   or not (one of {TRUE, FALSE}).
 
   The model currently supports two RPC methods, one to replicate data from the primary to the 
@@ -99,18 +102,17 @@ CONSTANTS Replication, TrimTranslog
 
 (* 
   Shard allocation is determined by the master and broadcasted to the data nodes in the form of a
-  routing table, which is a map from node id to one of {Primary, Replica, Unassigned}, denoting the
-  information whether the respective node has the primary shard, a replica shard or no shard
-  assigned at all.
+  routing table, which is a map from node id to one of {Primary, Replica, Unassigned}, denoting 
+  whether the respective node has the primary shard, a replica shard or no shard assigned at all.
 *)
 CONSTANTS Primary, Replica, Unassigned
 
 (*
-  Beside managing and broadcasting the routing table, the master also tracks the information if
+  Beside managing and broadcasting the routing table, the master also tracks if
   a primary failed and/or a replica was promoted to primary, incrementing a number called the 
   "primary term" whenever this happens. Each new primary operates under a new term, allowing nodes
   to reject replication requests that come from a primary that has been demoted by the master.
-  Routing table and primary term together form the cluster state, which is simply a record type
+  The routing table and primary term together form the cluster state, which is simply a record type
   containing both:
 
       [routingTable |->
@@ -146,7 +148,7 @@ VARIABLE messages
 *)
 VARIABLE messageDrops
 
-(* Another failure modeled in the specification is the crash of nodes.
+(* Another failure modeled in the specification is the crashing of nodes.
    The following variable denotes the set of nodes that are crashed. Only non-crashed nodes
    can accept requests.
 *)
@@ -176,11 +178,11 @@ clientVars == <<nextClientValue, clientResponses>>
    same request id as the requests they were originating from.
 
    This is just a natural number denoting the next available request id. It is incremented whenever
-   a request id was used.
+   a request id is used.
 *)
 VARIABLE nextRequestId
 
-(* To determine if a replication operation was successful, it is not only sufficient to correlate
+(* To determine if a replication operation was successful, it is not sufficient to correlate
    responses. Responses might arrive at different moments in time. It's not always required to
    gather all replication responses before determining whether the overall request failed. In that
    case, we need to convey this information to future responses being handled. This is captured in
@@ -190,7 +192,7 @@ VARIABLE nextRequestId
 *)
 VARIABLE replicationStatus
 
-\* The following variables capture state on a per-node basis (maps with domain Nodes).
+\* The following variables capture state on a per-node basis (maps with domain nodes).
 
 (* Cluster states are determined by the master and broadcasted to nodes. Due to the distributed
    nature of the system, they can arrive and be applied at different times on the nodes. ES only
@@ -204,7 +206,7 @@ VARIABLE replicationStatus
 VARIABLE clusterStateOnNode
 
 (* The cluster state contains the current term number. Nodes might learn about the highest primary
-   term number not only through cluster state updates, but also trough other node-to-node
+   term number not only through cluster state updates, but also through other node-to-node
    communication such as replication requests. They store the most recent information (highest term
    they've heard about). The variable "currentTerm" is a map from node id to primary term number,
    representing the highest primary term number that is known to the node.
@@ -218,10 +220,10 @@ VARIABLE currentTerm
    number that was assigned to this operation on the primary. The replica then assigns the operation
    to the same slot in its transaction log. Due to the concurrent nature of replication, replicas
    might fill these slots out-of-order. If the primary crashes or some replication requests don't make
-   it to the replica, the replica can end up in a state where its transaction log has holes it it
+   it to the replica, the replica can end up in a state where its transaction log has holes in it
    (slots that are not filled while subsequent slots are filled).
 
-   Example for a transaction log on primary and replica:
+   Example of a transaction log on the primary and a replica:
    `.
                 ---------------------
                 | 1 | 2 | 3 | 4 | 5 |
@@ -243,27 +245,33 @@ VARIABLE tlog
 
 (* When a request comes to a primary, it has to select a slot (the sequence number) to put the
    request into. It corresponds to the slot in the transaction log right after the highest slot
-   that's filled. It is modeled as a map from node id to next sequence number to use for indexing
-   if shard on this node is a primary
+   that's filled. It is modeled as a map from node id to the next sequence number to use for indexing
+   if the shard on this node is a primary.
 *)
 VARIABLE nextSeq
 
 (* Having a transaction log in place, it is useful to know about the highest slot in the transaction
    log where all slots below it have been successfully replicated to all replicas, i.e. the common
-   history shared by all in-sync shard copies. It is useful because in case where a primary
-   fails, a replica being promoted to primary knows that it has to only worry about being out of sync
+   history shared by all in-sync shard copies. It is useful because in the case where a primary
+   fails, a replica which is promoted to primary knows that it has to only worry about being out of sync
    with other replicas on slots that are beyond this slot. The primary is in charge of tracking
    this information, also called global checkpoint. For this, replica shards share information with the
    primary on the highest slot they have filled where all lower slots are filled as well, called the
-   local checkpoint. The primary then establishes the global checkpoint as the minimum of all local
-   checkpoints and broadcasts this information to the replicas.
+   local checkpoint. The primary then establishes the global checkpoint as the minimum of the local
+   checkpoint value received from all shard copies (including its own local checkpoint) and broadcasts 
+   this information to the replicas.
 
    The global checkpoint is modeled as a map from node id to sequence number.
 *)
 VARIABLE globalCheckPoint
 
-\* The local checkpoint is modeled as a map from node id (node that is doing the tracking)
-\* to node id (node for which the local checkpoint is being tracked) to sequence number.
+(* The local checkpoint is modeled as a map from node id (node that is doing the tracking)
+   to node id (node for which the local checkpoint is being tracked) to sequence number.
+   
+   Only the primary maintains the local checkpoints from all replicas, but because of the possibility of 
+   the primary changing over time, and in order to separate the state for each node more clearly, we maintain 
+   a node id to local checkpoint map for each node in the cluster.
+*)
 VARIABLE localCheckPoint
 
 \* The placeholder "nodeVars" is used as a shorthand for all node variables
@@ -283,6 +291,12 @@ Max(s) == CHOOSE x \in s : \A y \in s : x >= y
 ----
 
 \* `^\Large\bf Helper functions on routing table ^'
+
+(* Note, in this section, the terms "shard" and "node id" are conflated, because
+   we are only considering one shard and all its copies, so each shard can be 
+   uniquely identified by the node it resides on. The term "shard" or "node" is chosen 
+   solely based on the context of what is being explained or specified.
+*)
 
 \* Returns shards that are marked as Primary in routing table
 Primaries(routingTable) == {n \in Nodes : routingTable[n] = Primary}
@@ -378,11 +392,13 @@ FailedResponse(m) == [DefaultResponse(m) EXCEPT !.success = FALSE]
 
 (* `^\bf\large MaxSafeSeq ^'
    The local checkpoint is defined as the highest slot in the translog, where all lower slots
-   are filled. It is not sufficient to consider only holes in the translog as unsafe to prevent
-   local checkpoint from moving foward. We actually want to prevent local checkpoint to move past
-   slots which are filled but marked as unsafe. Translog entries thus have a marker
+   are filled. It is not only holes in the translog that prevent the local checkpoint from moving foward. 
+   We actually want to prevent the local checkpoint from moving past slots which are filled but marked as 
+   unsafe. Unsafe entries in the translog are entries that appear after the global checkpoint that are not
+   allowed to contribute to the advancement of the local checkpoint until a resyncing phase happens due to 
+   the primary shard changing nodes. Translog entries thus have a marker
    (\in {TRUE, FALSE}) that says whether the local checkpoint can move past them.
-   Yields highest sequence number which is safe and where all lower slots are safe as well.
+   This function yields highest sequence number which is safe and where all lower slots are safe as well.
    Yields 0 if no such number exists.
 
    Examples: (T stands for TRUE, F for FALSE) 
@@ -425,7 +441,7 @@ MaxSafeSeq(ntlog) ==
       | 1 | 2 | 3 | 4 | 5 |   ----------->    | 1 | 2 | 3 | 4 | 5 |
       |-------------------|   globalCP = 3    |-------------------|
       | x | x | x | x | x |   marker = FALSE  | x | x | x | x | x |
-      | T | T | T | T | T |                   | T | T | T | F | T |
+      | T | T | T | T | T |                   | T | T | T | F | F |
       ---------------------                   ---------------------
    .'
 *)
@@ -444,7 +460,7 @@ FillAndMark(ntlog, globalCP, marker) ==
 
 
 (* `^\bf\large MarkSafeUpTo ^'
-   Mark translog entries as safe to advance local checkpoint up to position "globalCP" included.
+   Mark translog entries as safe to advance the local checkpoint up to the position "globalCP" (included).
    When receiving global checkpoint information from the primary, used to mark all entries up to
    that point as safe.
 
@@ -467,7 +483,7 @@ MarkSafeUpTo(ntlog, globalCP) ==
 
 (* `^\bf\large TrimTlog ^'
    Trim elements from translog with position strictly greater than maxseq and
-   term strictly lower than minterm
+   term strictly lower than minterm.
 
    Example: 
    `.
@@ -871,7 +887,7 @@ CrashHandled == \A n \in crashedNodes : clusterStateOnMaster.routingTable[n] = U
 \* shard that is considered active by the master
 ActiveShard(n) == clusterStateOnMaster.routingTable[n] /= Unassigned
 
-\* everything in the translog up to slot i included
+\* everything in the translog up to and including slot i
 UpToSlot(ntlog, i) == [j \in 1..i |-> ntlog[j]]
 
 \* copy of translog, where we assume all entries are marked safe
@@ -890,7 +906,7 @@ AllCopiesSameContents ==
 \* `^\Large\bf Main invariants ^'
 
 \* checks if the translog for all nodes are equivalent up to their global checkpoint, only differing
-\* in the safety marker (which can be false sometimes if global checkpoint on one shard is lower
+\* in the safety marker (which can be false sometimes if the global checkpoint on one shard is lower
 \* than on another one)
 SameTranslogUpToGlobalCheckPoint ==
   \A n1, n2 \in Nodes:
@@ -915,11 +931,11 @@ AllAckedResponsesStored ==
                          /\ tlog[n][r.seq].value = r.value
                          /\ tlog[n][r.seq].term = r.term
 
-\* checks if global checkpoint is below local checkpoint on each node
+\* checks that the global checkpoint is the same as or below the local checkpoint on each node
 GlobalCheckPointBelowLocalCheckPoints ==
     \A n \in Nodes : globalCheckPoint[n] <= localCheckPoint[n][n]
 
-\* checks if local checkpoint on a node is higher than what other nodes have stored for it
+\* checks that the local checkpoint on a node is higher than what other nodes have stored for that node
 LocalCheckPointOnNodeHigherThanWhatOthersHave ==
     \A n1, n2 \in Nodes : localCheckPoint[n1][n1] >= localCheckPoint[n2][n1]
 
@@ -929,6 +945,6 @@ ReplicationStatusDeterminedAfterNoMessages ==
     replicationStatus[req] = Nil => { m \in messages : m.req = req } /= {}
 
 \* routing table is well-formed (has at most one primary)
-WellformedRoutingTable(routingTable) == Cardinality(Primaries(routingTable)) <= 1 
+WellFormedRoutingTable(routingTable) == Cardinality(Primaries(routingTable)) <= 1 
 
 =============================================================================
