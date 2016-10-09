@@ -555,8 +555,8 @@ ClientRequest(n, docId) ==
        /\ nextClientValue' = nextClientValue + 1
        \* set next unique key to use for replication requests so that we can relate responses
        /\ nextRequestId' = nextRequestId + 1
-       \* compute new local checkpoint based on updated translog
-       /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = MaxSafeSeq(tlog'[n])]
+       \* update local checkpoint (on primary this is equivalent to nextSeq[n] - 1)
+       /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = @ + 1]
        \* send out replication requests
        /\ messages' = messages \cup replRequests
        /\ IF replicas = {} THEN
@@ -629,7 +629,7 @@ HandleTrimTranslogRequest(n, m) ==
        \* don't handle requests with lower term than we have
        \* lower term means that it's coming from a primary that has since been demoted
        /\ Reply(FailedResponse(m), m)
-       /\ UNCHANGED <<tlog, currentTerm>>
+       /\ UNCHANGED <<tlog, currentTerm, localCheckPoint>>
      ELSE
        LET newGlobalCP == globalCheckPoint[n]
            gapsFilledTlog ==
@@ -641,12 +641,12 @@ HandleTrimTranslogRequest(n, m) ==
                tlog[n]
        IN
          /\ tlog' = [tlog EXCEPT ![n] = TrimTlog(gapsFilledTlog, m.maxseq, m.term)]
+         /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = MaxSafeSeq(tlog'[n])]
          /\ currentTerm' = [currentTerm EXCEPT ![n] = Max({@, m.term})]
          /\ Reply(DefaultResponse(m), m)
   /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars,
                  clusterStateOnNode, nextClientValue, nextRequestId, clientResponses,
-                 crashedNodes, messageDrops, nextSeq, globalCheckPoint,
-                 localCheckPoint, replicationStatus>>
+                 crashedNodes, messageDrops, nextSeq, globalCheckPoint, replicationStatus>>
 
 \* Helper function for handling responses
 FinishIfNeeded(m) ==
@@ -783,6 +783,7 @@ ApplyClusterStateFromMaster(n) ==
        IN 
          /\ tlog' = [tlog EXCEPT ![n] = newTlog]
          /\ localCheckPoint' = [localCheckPoint EXCEPT ![n] = localCPs]
+         /\ nextSeq' = [nextSeq EXCEPT ![n] = localCheckPoint'[n][n] + 1]
          /\ messages' = messages \cup replRequests \cup trimRequests
          /\ nextRequestId' = nextRequestId + numDocs + 1
          /\ IF replicas = {} THEN
@@ -801,8 +802,8 @@ ApplyClusterStateFromMaster(n) ==
            /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = MaxSafeSeq(tlog'[n])] 
          ELSE
            UNCHANGED <<tlog, localCheckPoint>>
-      /\ UNCHANGED <<messages, nextRequestId, replicationStatus>>
-  /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextSeq, clientVars,
+      /\ UNCHANGED <<messages, nextRequestId, replicationStatus, nextSeq>>
+  /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, clientVars,
                  globalCheckPoint, messageDrops>>
 
 
@@ -931,12 +932,16 @@ GlobalCheckPointBelowLocalCheckPoints ==
 LocalCheckPointOnNodeHigherThanWhatOthersHave ==
     \A n1, n2 \in Nodes : localCheckPoint[n1][n1] >= localCheckPoint[n2][n1]
 
+\* local checkpoint always corresponds to MaxSafeSeq on the node
+LocalCheckPointMatchesMaxSafeSeq ==
+  \A n \in Nodes : localCheckPoint[n][n] = MaxSafeSeq(tlog[n])
+
 \* once all messages for a replication request are treated, its status is determined
 ReplicationStatusDeterminedAfterNoMessages == 
   \A req \in DOMAIN replicationStatus :
     replicationStatus[req] = Nil => { m \in messages : m.req = req } /= {}
 
 \* routing table is well-formed (has at most one primary)
-WellFormedRoutingTable(routingTable) == Cardinality(Primaries(routingTable)) <= 1 
+WellFormedRoutingTable(routingTable) == Cardinality(Primaries(routingTable)) <= 1
 
 =============================================================================

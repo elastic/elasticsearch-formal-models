@@ -6,7 +6,7 @@
 <intAttribute key="dfidDepth" value="100"/>
 <booleanAttribute key="dfidMode" value="false"/>
 <intAttribute key="distributedFPSetCount" value="0"/>
-<stringAttribute key="distributedNetworkInterface" value="192.168.178.20"/>
+<stringAttribute key="distributedNetworkInterface" value="192.168.178.34"/>
 <stringAttribute key="distributedTLC" value="off"/>
 <stringAttribute key="distributedTLCVMArgs" value=""/>
 <intAttribute key="fpBits" value="0"/>
@@ -28,6 +28,7 @@
 <listEntry value="1SameTranslogUpToGlobalCheckPoint"/>
 <listEntry value="1ReplicationStatusDeterminedAfterNoMessages"/>
 <listEntry value="1AllAckedResponsesStored"/>
+<listEntry value="1LocalCheckPointMatchesMaxSafeSeq"/>
 </listAttribute>
 <listAttribute key="modelCorrectnessProperties">
 <listEntry value="1&lt;&gt;AllCopiesSameContents"/>
