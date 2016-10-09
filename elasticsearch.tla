@@ -809,6 +809,7 @@ ApplyClusterStateFromMaster(n) ==
 \* Fail request message
 FailRequestMessage(m) ==
   /\ m.request = TRUE
+  /\ m.dest \notin crashedNodes \* pointless to fail request going to crashed node
   /\ Reply(FailedResponse(m), m)
   /\ messageDrops' = messageDrops + 1
   /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, replicationStatus,
@@ -818,6 +819,7 @@ FailRequestMessage(m) ==
 FailResponseMessage(m) ==
   /\ m.request = FALSE
   /\ m.success = TRUE
+  /\ m.dest \notin crashedNodes  \* pointless to fail response going to crashed node
   /\ Reply([m EXCEPT !.success = FALSE], m)
   /\ messageDrops' = messageDrops + 1
   /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, replicationStatus,
@@ -847,22 +849,12 @@ RemoveCrashedNodeFromClusterState(n) ==
   /\ UNCHANGED <<crashedNodes, messages, nextRequestId, replicationStatus, clientVars,
                  nodeVars, messageDrops>>
 
-\* Remove message that goes to dead node. Ensures that each run ends with an empty set of messages
-CleanResponseToDeadNode(m) ==
-  /\ m.request = FALSE
-  /\ m.dest \in crashedNodes
-  /\ messages' = messages \ {m}
-  /\ replicationStatus' = [replicationStatus EXCEPT ![m.req] = FALSE]
-  /\ UNCHANGED <<clusterStateOnMaster, clientResponses, nextClientValue, nextRequestId, nodeVars,
-                 crashedNodes, messageDrops>>
-
 \* Defines how the variables may transition.
 Next == \/ \E n \in Nodes : \E docId \in DocumentIds : ClientRequest(n, docId)
         \/ \E m \in messages : HandleReplicationRequest(m.dest, m)
         \/ \E m \in messages : HandleReplicationResponse(m.dest, m.source, m)
         \/ \E m \in messages : HandleTrimTranslogRequest(m.dest, m)
         \/ \E m \in messages : HandleTrimTranslogResponse(m.dest, m.source, m)
-        \/ \E m \in messages : CleanResponseToDeadNode(m)
         \/ \E m \in messages : FailRequestMessage(m)
         \/ \E m \in messages : FailResponseMessage(m)
         \/ \E n \in Nodes : ApplyClusterStateFromMaster(n)
@@ -875,11 +867,11 @@ Next == \/ \E n \in Nodes : \E docId \in DocumentIds : ClientRequest(n, docId)
 \* `^\Large\bf Helper functions for making assertions ^'
 
 \* no active messages
-NoActiveMessages == messages = {}
+NoActiveMessages == { m \in messages : m.dest \notin crashedNodes } = {}
 
 \* cluster state on master has been applied to non-crashed nodes
 ClusterStateAppliedOnAllNodes ==
-    \A n \in Nodes : n \notin crashedNodes => clusterStateOnNode[n] = clusterStateOnMaster
+  \A n \in Nodes : n \notin crashedNodes => clusterStateOnNode[n] = clusterStateOnMaster
 
 \* crashed node has been handled by master
 CrashHandled == \A n \in crashedNodes : clusterStateOnMaster.routingTable[n] = Unassigned
