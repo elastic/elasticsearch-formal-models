@@ -76,56 +76,34 @@ CONSTANTS Nodes
 \* Set of possible document ids (i.e. values for "_id" field)
 CONSTANTS DocumentIds
 
-(*
-  Communication between the nodes is done using an RPC-like mechanism.
-  For each request there is an associated response. In-flight requests / responses are modeled
-  using messages, which are represented in TLA+ as record types. To distinguish requests from
-  responses, the message record type contains a field "request" that denotes whether the message is
-  a request or a response (takes as value one of {TRUE, FALSE}). It also contains the node id of
-  the sender and receiver of the call (in the fields "source" and "dest"). The procedure that is
-  called is found under the field "method".
+(* Communication between the nodes is done using an RPC-like mechanism.
+   For each request there is an associated response. In-flight requests / responses are modeled
+   using messages, which are represented in TLA+ as record types. To distinguish requests from
+   responses, the message record type contains a field "request" that denotes whether the message is
+   a request or a response (takes as value one of {TRUE, FALSE}). It also contains the node id of
+   the sender and receiver of the call (in the fields "source" and "dest"). The procedure that is
+   called is found under the field "method".
 
-  For example, sending a replication request from node n1 to n2 would yield the following message:
-     [request   |-> TRUE,
-      method    |-> Replication,
-      source    |-> n1,
-      dest      |-> n2]
+   For example, sending a replication request from node n1 to n2 would yield the following message:
+      [request   |-> TRUE,
+       method    |-> Replication,
+       source    |-> n1,
+       dest      |-> n2]
 
-  Responses also have a field "success" which indicates whether the call was successful
-  or not (one of {TRUE, FALSE}).
+   Responses also have a field "success" which indicates whether the call was successful
+   or not (one of {TRUE, FALSE}).
 
-  The model currently supports two RPC methods, one to replicate data from the primary to the 
-  replicas and another one to trim the translog (explained later). The reroute logic for rerouting
-  requests to the primary is not modeled as it has no impact on consistency/durability guarantees.
+   The model currently supports two RPC methods, one to replicate data from the primary to the 
+   replicas and another one to trim the translog (explained later). The reroute logic for rerouting
+   requests to the primary is not modeled as it has no impact on consistency/durability guarantees.
 *) 
 CONSTANTS Replication, TrimTranslog
 
-(* 
-  Shard allocation is determined by the master and broadcasted to the data nodes in the form of a
-  routing table, which is a map from node id to one of {Primary, Replica, Unassigned}, denoting 
-  whether the respective node has the primary shard, a replica shard or no shard assigned at all.
+(* Shard allocation is determined by the master and broadcasted to the data nodes in the form of a
+   routing table, which is a map from node id to one of {Primary, Replica, Unassigned}, denoting 
+   whether the respective node has the primary shard, a replica shard or no shard assigned at all.
 *)
 CONSTANTS Primary, Replica, Unassigned
-
-(*
-  Beside managing and broadcasting the routing table, the master also tracks if
-  a primary failed and/or a replica was promoted to primary, incrementing a number called the 
-  "primary term" whenever this happens. Each new primary operates under a new term, allowing nodes
-  to reject replication requests that come from a primary that has been demoted by the master.
-  The routing table and primary term together form the cluster state, which is simply a record type
-  containing both:
-
-      [routingTable |->
-          [n1 |-> Primary,
-           n2 |-> Replica,
-           n3 |-> Unassigned],
-       primaryTerm |-> 1]
-
-  The following constant denotes the set of possible initial cluster states that are to be
-  considered for exploring the model. It is fixed by the model checker to typical scenarios, e.g.
-  {[ routingTable |-> [n1 |-> Primary, n2 |-> Replica, n3 |-> Replica], primaryTerm |-> 1 ]}
-*)
-CONSTANTS InitialClusterStates
 
 \* The constant "Nil" denotes a non-existing value (e.g. in transaction log) or a place-holder for
 \* a value that is to be computed.
@@ -140,14 +118,6 @@ CONSTANTS Nil
 \* Set of in-flight requests and responses sent between data nodes.
 VARIABLE messages
 
-(*
-   The specification models communication failures between nodes. To bound the number of these
-   failures in the model checker, we have to track the number of failures that have been
-   triggered in the model.
-   This is just a natural number incremented on each failure.
-*)
-VARIABLE messageDrops
-
 (* Another failure modeled in the specification is the crashing of nodes.
    The following variable denotes the set of nodes that are crashed. Only non-crashed nodes
    can accept requests.
@@ -155,7 +125,22 @@ VARIABLE messageDrops
 VARIABLE crashedNodes
 
 
-\* Current cluster state on master (the master is not explicitly modeled as a node)
+(* Beside managing and broadcasting the routing table, the master also tracks if
+   a primary failed and/or a replica was promoted to primary, incrementing a number called the 
+   "primary term" whenever this happens. Each new primary operates under a new term, allowing nodes
+   to reject replication requests that come from a primary that has been demoted by the master.
+   The routing table and primary term together form the cluster state, which is simply a record type
+   containing both:
+
+      [routingTable |->
+          [n1 |-> Primary,
+           n2 |-> Replica,
+           n3 |-> Unassigned],
+       primaryTerm |-> 1]
+
+   The following variable represents the current cluster state on the master, which is not
+   explicitly modeled as a node.
+*)
 VARIABLE clusterStateOnMaster
 
 \* For simplicity we assume that each client (index) request uses a new unique value to be indexed.
@@ -182,15 +167,6 @@ clientVars == <<nextClientValue, clientResponses>>
 *)
 VARIABLE nextRequestId
 
-(* To determine if a replication operation was successful, it is not sufficient to correlate
-   responses. Responses might arrive at different moments in time. It's not always required to
-   gather all replication responses before determining whether the overall request failed. In that
-   case, we need to convey this information to future responses being handled. This is captured in
-   a map from request id to a ternary flag that determines if the request was successfully
-   replicated or not (Possible values {TRUE, FALSE, Nil}). The special value Nil means that the
-   overall success/failure is not decided yet.
-*)
-VARIABLE replicationStatus
 
 \* The following variables capture state on a per-node basis (maps with domain nodes).
 
@@ -243,13 +219,6 @@ VARIABLE currentTerm
 *)
 VARIABLE tlog
 
-(* When a request comes to a primary, it has to select a slot (the sequence number) to put the
-   request into. It corresponds to the slot in the transaction log right after the highest slot
-   that's filled. It is modeled as a map from node id to the next sequence number to use for indexing
-   if the shard on this node is a primary.
-*)
-VARIABLE nextSeq
-
 (* Having a transaction log in place, it is useful to know about the highest slot in the transaction
    log where all slots below it have been successfully replicated to all replicas, i.e. the common
    history shared by all in-sync shard copies. It is useful because in the case where a primary
@@ -267,7 +236,7 @@ VARIABLE globalCheckPoint
 
 (* The local checkpoint is modeled as a map from node id (node that is doing the tracking)
    to node id (node for which the local checkpoint is being tracked) to sequence number.
-   
+
    Only the primary maintains the local checkpoints from all replicas, but because of the possibility of 
    the primary changing over time, and in order to separate the state for each node more clearly, we maintain 
    a node id to local checkpoint map for each node in the cluster.
@@ -275,7 +244,7 @@ VARIABLE globalCheckPoint
 VARIABLE localCheckPoint
 
 \* The placeholder "nodeVars" is used as a shorthand for all node variables
-nodeVars == <<clusterStateOnNode, nextSeq, tlog, localCheckPoint, globalCheckPoint, currentTerm>>
+nodeVars == <<clusterStateOnNode, tlog, localCheckPoint, globalCheckPoint, currentTerm>>
 
 
 ----
@@ -299,22 +268,22 @@ Max(s) == CHOOSE x \in s : \A y \in s : x >= y
 *)
 
 \* Returns shards that are marked as Primary in routing table
-Primaries(routingTable) == {n \in Nodes : routingTable[n] = Primary}
+Primaries(routingTable) == {n \in DOMAIN routingTable : routingTable[n] = Primary}
 
 \* Returns shards that are marked as Replica in routing table
-Replicas(routingTable) == {n \in Nodes : routingTable[n] = Replica}
+Replicas(routingTable) == {n \in DOMAIN routingTable : routingTable[n] = Replica}
 
 \* Returns shards that are marked as Primary or Replica in routing table
-Assigned(routingTable) == {n \in Nodes : routingTable[n] /= Unassigned}
+Assigned(routingTable) == {n \in DOMAIN routingTable : routingTable[n] /= Unassigned}
 
 \* Whether the routing table has exactly one primary
 HasUniquePrimary(routingTable) == Cardinality(Primaries(routingTable)) = 1
 
 \* Selects a node that has a primary assigned in the routing table
-ChoosePrimary(routingTable) == CHOOSE n \in Nodes : n \in Primaries(routingTable)
+ChoosePrimary(routingTable) == CHOOSE n \in DOMAIN routingTable : n \in Primaries(routingTable)
 
 \* Selects a node that has a replica assigned in the routing table
-ChooseReplica(routingTable) == CHOOSE n \in Nodes : n \in Replicas(routingTable)
+ChooseReplica(routingTable) == CHOOSE n \in DOMAIN routingTable : n \in Replicas(routingTable)
 
 \* Determines whether the shard on node n was promoted to primary when a cluster state update occurs
 ShardWasPromotedToPrimary(n, incomingRoutingTable, localRoutingTable) ==
@@ -374,7 +343,6 @@ DefaultTrimTranslogResponse(m) == [request   |-> FALSE,
                                    req       |-> m.req,
                                    maxseq    |-> m.maxseq, \* trim above this sequence number
                                    term      |-> m.term, \* trim entries with term lower than this
-                                   client    |-> m.client,
                                    success   |-> TRUE]
 
 \* Generate default response based on request m
@@ -389,6 +357,12 @@ FailedResponse(m) == [DefaultResponse(m) EXCEPT !.success = FALSE]
 ----
 
 \* `^\Large\bf Helper functions on translog ^'
+
+(* When a request comes to a primary, it has to select a slot (the sequence number) to put the
+   request into. It corresponds to the slot in the transaction log right after the highest slot
+   that's filled.
+*)
+NextSeq(ntlog) == Max(DOMAIN ntlog \cup {0}) + 1
 
 (* `^\bf\large MaxSafeSeq ^'
    The local checkpoint is defined as the highest slot in the translog, where all lower slots
@@ -503,15 +477,31 @@ TrimTlog(ntlog, maxseq, minterm) ==
 
 \* `^\Large\bf Initial states ^'
 
+\* All possible routing tables where there is one primary
+RoutingTablesWithPrimary ==
+  UNION {
+    {
+      [n \in {pn} |-> Primary] @@ \* pn has the primary
+      [n \in rs |-> Replica] @@ \* rs is the subset of nodes having replicas
+      [n \in ((Nodes \ rs) \ {pn}) |-> Unassigned] \* remaining nodes have unassigned shards
+        : rs \in SUBSET (Nodes \ {pn})
+    } : pn \in Nodes
+  }
+
+\* Possible initial routing tables are those which have a primary or where all shards are unassigned
+InitialRoutingTables == RoutingTablesWithPrimary \cup {[n \in Nodes |-> Unassigned]}
+
+\* The following constant denotes the set of possible initial cluster states that are to be
+\* considered for exploring the model, containing cluster states such as
+\* [ routingTable |-> [n1 |-> Primary, n2 |-> Replica, n3 |-> Replica], primaryTerm |-> 1 ]
+InitialClusterStates == { [routingTable |-> rt, primaryTerm |-> 1] : rt \in InitialRoutingTables }
+
 Init == /\ clusterStateOnMaster \in InitialClusterStates
         /\ messages           = {}
         /\ crashedNodes       = {}
         /\ nextClientValue    = 1
         /\ clientResponses    = {}
         /\ nextRequestId      = 1
-        /\ replicationStatus  = << >> \* empty map
-        /\ messageDrops       = 0
-        /\ nextSeq            = [n \in Nodes |-> 1]
         /\ tlog               = [n \in Nodes |-> << >>]
         /\ localCheckPoint    = [n1 \in Nodes |-> [n2 \in Nodes |-> 0]]
         /\ globalCheckPoint   = [n \in Nodes |-> 0]
@@ -533,6 +523,7 @@ ClientRequest(n, docId) ==
                         term  |-> primaryTerm,
                         value |-> nextClientValue,
                         safe  |-> TRUE]
+       seq          == NextSeq(tlog[n])
        \* create replication requests for each replica that the primary knows about
        replRequests == {([request  |-> TRUE,
                           method   |-> Replication,
@@ -541,16 +532,14 @@ ClientRequest(n, docId) ==
                           req      |-> nextRequestId,
                           id       |-> docId,
                           value    |-> nextClientValue,
-                          seq      |-> nextSeq[n],
+                          seq      |-> seq,
                           rterm    |-> primaryTerm, \* current term when issuing request
                           sterm    |-> primaryTerm, \* term to be stored (differs for fast resync)
                           client   |-> TRUE, \* it's a replication request initiated by client
                           globalCP |-> globalCheckPoint[n]]) : rn \in replicas}
      IN 
        \* put entry into translog
-       /\ tlog' = [tlog EXCEPT ![n] = (nextSeq[n] :> tlogEntry) @@ @]
-       \* set sequence number to use next time to current + 1
-       /\ nextSeq' = [nextSeq EXCEPT ![n] = @ + 1]
+       /\ tlog' = [tlog EXCEPT ![n] = (seq :> tlogEntry) @@ @]
        \* Make sure that each client request uses a unique value
        /\ nextClientValue' = nextClientValue + 1
        \* set next unique key to use for replication requests so that we can relate responses
@@ -561,17 +550,16 @@ ClientRequest(n, docId) ==
        /\ messages' = messages \cup replRequests
        /\ IF replicas = {} THEN
             \* no replicas, directly acknowledge to the client
-            /\ clientResponses' = clientResponses \cup {[id    |-> docId,
-                                                         value |-> nextClientValue,
-                                                         seq   |-> nextSeq[n],
-                                                         term  |-> primaryTerm]}
-            /\ replicationStatus' = replicationStatus @@ (nextRequestId :> TRUE)
+            /\ clientResponses' = clientResponses \cup {[success |-> TRUE,
+                                                         id      |-> docId,
+                                                         value   |-> nextClientValue,
+                                                         seq     |-> seq,
+                                                         term    |-> primaryTerm]}
           ELSE
             \* replication requests sent out, wait for responses before acking to client
             /\ UNCHANGED <<clientResponses>>
-            /\ replicationStatus' = replicationStatus @@ (nextRequestId :> Nil)
   /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, crashedNodes,
-                 globalCheckPoint, messageDrops, currentTerm>>
+                 globalCheckPoint, currentTerm>>
 
 \* Replication request arrives on node n with message m
 HandleReplicationRequest(n, m) ==
@@ -582,8 +570,8 @@ HandleReplicationRequest(n, m) ==
         \* don't accept replication requests with lower term than we have
         \* lower term means that it's coming from a primary that has since been demoted
         /\ Reply(FailedResponse(m), m)
-        /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, replicationStatus,
-                       crashedNodes, nodeVars, messageDrops>>
+        /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars,
+                       crashedNodes, nodeVars>>
       ELSE
         /\ LET
              tlogEntry      == [id    |-> m.id,
@@ -612,13 +600,12 @@ HandleReplicationRequest(n, m) ==
               localCP       == MaxSafeSeq(newTlog)
            IN 
              /\ tlog' = [tlog EXCEPT ![n] = newTlog]
-             /\ nextSeq' = [nextSeq EXCEPT ![n] = Max({@, m.seq + 1})]
              /\ currentTerm' = [currentTerm EXCEPT ![n] = Max({@, m.rterm})]
              /\ globalCheckPoint' = [globalCheckPoint EXCEPT ![n] = newGlobalCP]
              /\ localCheckPoint'  = [localCheckPoint EXCEPT ![n][n] = localCP]
              /\ Reply([DefaultResponse(m) EXCEPT !.localCP = localCP], m)
         /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, nextClientValue, nextRequestId,
-                       clientResponses, crashedNodes, messageDrops, replicationStatus>>
+                       clientResponses, crashedNodes>>
 
 \* Trim translog request arrives on node n with message m
 HandleTrimTranslogRequest(n, m) ==
@@ -644,29 +631,28 @@ HandleTrimTranslogRequest(n, m) ==
          /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = MaxSafeSeq(tlog'[n])]
          /\ currentTerm' = [currentTerm EXCEPT ![n] = Max({@, m.term})]
          /\ Reply(DefaultResponse(m), m)
-  /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, clusterStateOnNode,
-                 crashedNodes, messageDrops, nextSeq, globalCheckPoint, replicationStatus>>
+  /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars,
+                 clusterStateOnNode, crashedNodes, globalCheckPoint>>
 
-\* Helper function for handling responses
+\* Helper function for handling replication responses
 FinishIfNeeded(m) ==
   \* check if this is the last response we're waiting for
-  IF { ms \in messages : ms.req = m.req } = {m} THEN
-    /\ replicationStatus' = [replicationStatus EXCEPT ![m.req] = TRUE]
-    \* was it a replication request initiated by a client request?
-    /\ IF m.client THEN
-         clientResponses' = clientResponses \cup {[id    |-> m.id,
-                                                   value |-> m.value,
-                                                   seq   |-> m.seq,
-                                                   term  |-> m.rterm]}
-       ELSE
-         UNCHANGED <<clientResponses>>
+  IF /\ m.client
+     /\ { ms \in messages : ms.req = m.req } = {m}
+     \* check if the request has not been failed already to the client
+     /\ { cr \in clientResponses : cr.success = FALSE /\ cr.req = m.req } = {} THEN
+    clientResponses' = clientResponses \cup {[success |-> TRUE,
+                                              id      |-> m.id,
+                                              value   |-> m.value,
+                                              seq     |-> m.seq,
+                                              term    |-> m.rterm]}
   ELSE
-    UNCHANGED <<clientResponses, replicationStatus>>
+    UNCHANGED <<clientResponses>>
 
-\* Helper function for handling responses
+\* Helper function for handling replication responses
 FinishAsFailed(m) ==
-  /\ replicationStatus' = [replicationStatus EXCEPT ![m.req] = FALSE]
-  /\ UNCHANGED <<clientResponses>>
+  /\ clientResponses' = clientResponses \cup {[success |-> FALSE,
+                                               req     |-> m.req]}
 
 \* Replication response arrives on node n from node rn with message m
 HandleReplicationResponse(n, rn, m) ==
@@ -674,41 +660,37 @@ HandleReplicationResponse(n, rn, m) ==
   /\ m.request = FALSE
   /\ m.method = Replication
   \* are we still interested in the response or already marked the overall client request as failed?
-  /\ IF replicationStatus[m.req] = Nil THEN
-       IF m.success THEN
-         \* is it a newer local checkpoint than we have?
-         /\ IF m.localCP > localCheckPoint[n][rn] /\
-               \* is the shard still active on this node?
-               clusterStateOnNode[n].routingTable[n] /= Unassigned THEN
-              LET
-                newLocalCheckPoint == [localCheckPoint EXCEPT ![n][rn] = m.localCP]
-                assigned           == Assigned(clusterStateOnNode[n].routingTable)
-                computedGlobalCP   == Min({newLocalCheckPoint[n][i] : i \in assigned})
-              IN
-                /\ localCheckPoint'  = newLocalCheckPoint
-                \* also update global checkpoint if necessary
-                /\ globalCheckPoint' = [globalCheckPoint EXCEPT ![n] = computedGlobalCP]
-            ELSE
-              UNCHANGED <<localCheckPoint, globalCheckPoint>> 
-         /\ UNCHANGED <<clusterStateOnMaster>>
-         /\ FinishIfNeeded(m)
-       ELSE
-         \* replication failed, ask master to fail shard
-         /\ IF m.rterm < clusterStateOnMaster.primaryTerm THEN
-              \* term outdated, fail itself and don't ack client write
-              /\ FinishAsFailed(m)
-              /\ UNCHANGED <<clusterStateOnMaster>>
-            ELSE
-              \* fail shard and respond to client
-              /\ clusterStateOnMaster' = FailShard(rn, clusterStateOnMaster)
-              /\ FinishIfNeeded(m)
-         /\ UNCHANGED <<localCheckPoint, globalCheckPoint>>
+  /\ IF m.success THEN
+       \* is it a newer local checkpoint than we have?
+       /\ IF m.localCP > localCheckPoint[n][rn] /\
+             \* is the shard still active on this node?
+             clusterStateOnNode[n].routingTable[n] /= Unassigned THEN
+            LET
+              newLocalCheckPoint == [localCheckPoint EXCEPT ![n][rn] = m.localCP]
+              assigned           == Assigned(clusterStateOnNode[n].routingTable)
+              computedGlobalCP   == Min({newLocalCheckPoint[n][i] : i \in assigned})
+            IN
+              /\ localCheckPoint'  = newLocalCheckPoint
+              \* also update global checkpoint if necessary
+              /\ globalCheckPoint' = [globalCheckPoint EXCEPT ![n] = computedGlobalCP]
+          ELSE
+            UNCHANGED <<localCheckPoint, globalCheckPoint>>
+       /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode>>
+       /\ FinishIfNeeded(m)
      ELSE
-       UNCHANGED <<clusterStateOnMaster, clientResponses, replicationStatus, localCheckPoint,
-                   globalCheckPoint>>
+       \* replication failed, ask master to fail shard
+       /\ IF m.rterm < clusterStateOnMaster.primaryTerm THEN
+            \* term outdated, fail itself and don't ack client write
+            /\ FinishAsFailed(m)
+            /\ UNCHANGED <<clusterStateOnMaster>>
+          ELSE
+            \* fail shard and respond to client
+            /\ clusterStateOnMaster' = FailShard(rn, clusterStateOnMaster)
+            /\ FinishIfNeeded(m)
+       /\ UNCHANGED <<localCheckPoint, globalCheckPoint>>
   /\ messages' = messages \ {m}
-  /\ UNCHANGED <<nextClientValue, nextRequestId, crashedNodes, clusterStateOnNode, tlog,
-                 nextSeq, messageDrops, currentTerm>>
+  /\ UNCHANGED <<nextClientValue, nextRequestId, crashedNodes, tlog, clusterStateOnNode,
+                 currentTerm>>
 
 
 \* Trim translog response arrives on node n from node rn with message m
@@ -716,26 +698,13 @@ HandleTrimTranslogResponse(n, rn, m) ==
    /\ n \notin crashedNodes
    /\ m.request = FALSE
    /\ m.method = TrimTranslog
-   /\ IF replicationStatus[m.req] = Nil THEN
-        IF m.success THEN
-          /\ FinishIfNeeded(m)
-          /\ UNCHANGED <<clusterStateOnMaster, localCheckPoint, globalCheckPoint>>
-        ELSE
-          /\ IF m.term < clusterStateOnMaster.primaryTerm THEN
-               \* term outdated, fail itself
-               /\ FinishAsFailed(m)
-               /\ UNCHANGED <<clusterStateOnMaster>>
-             ELSE
-               \* fail shard
-               /\ clusterStateOnMaster' = FailShard(rn, clusterStateOnMaster)
-               /\ FinishIfNeeded(m)
-          /\ UNCHANGED <<localCheckPoint, globalCheckPoint>>
-      ELSE
-        UNCHANGED <<clusterStateOnMaster, clientResponses, replicationStatus, localCheckPoint,
-                    globalCheckPoint>>
    /\ messages' = messages \ {m}
-   /\ UNCHANGED <<nextClientValue, nextRequestId, crashedNodes, clusterStateOnNode, tlog,
-                  nextSeq, messageDrops, currentTerm>>
+   /\ IF m.success = FALSE /\ m.term >= clusterStateOnMaster.primaryTerm THEN
+        \* fail shard
+        clusterStateOnMaster' = FailShard(rn, clusterStateOnMaster)
+      ELSE
+        UNCHANGED <<clusterStateOnMaster>>
+   /\ UNCHANGED <<nextClientValue, nextRequestId, crashedNodes, nodeVars, clientResponses>>
 
 \* Cluster state propagated from master is applied to node n
 ApplyClusterStateFromMaster(n) ==
@@ -782,15 +751,8 @@ ApplyClusterStateFromMaster(n) ==
        IN 
          /\ tlog' = [tlog EXCEPT ![n] = newTlog]
          /\ localCheckPoint' = [localCheckPoint EXCEPT ![n] = localCPs]
-         /\ nextSeq' = [nextSeq EXCEPT ![n] = localCheckPoint'[n][n] + 1]
          /\ messages' = messages \cup replRequests \cup trimRequests
          /\ nextRequestId' = nextRequestId + numDocs + 1
-         /\ IF replicas = {} THEN
-              UNCHANGED <<replicationStatus>>
-            ELSE
-              replicationStatus' = replicationStatus @@
-                                   [i \in nextRequestId..(nextRequestId+numDocs-1) |-> Nil] @@
-                                   ((nextRequestId+numDocs) :> Nil)
     ELSE
       \* check if another shard was promoted to primary
       /\ IF  clusterStateOnNode[n].routingTable[n] = Replica /\
@@ -801,9 +763,9 @@ ApplyClusterStateFromMaster(n) ==
            /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = MaxSafeSeq(tlog'[n])] 
          ELSE
            UNCHANGED <<tlog, localCheckPoint>>
-      /\ UNCHANGED <<messages, nextRequestId, replicationStatus, nextSeq>>
+      /\ UNCHANGED <<messages, nextRequestId>>
   /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, clientVars,
-                 globalCheckPoint, messageDrops>>
+                 globalCheckPoint>>
 
 
 \* Fail request message
@@ -811,8 +773,7 @@ FailRequestMessage(m) ==
   /\ m.request = TRUE
   /\ m.dest \notin crashedNodes \* pointless to fail request going to crashed node
   /\ Reply(FailedResponse(m), m)
-  /\ messageDrops' = messageDrops + 1
-  /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, replicationStatus,
+  /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId,
                  clientVars, nodeVars>>
 
 \* Fail response message
@@ -821,8 +782,7 @@ FailResponseMessage(m) ==
   /\ m.success = TRUE
   /\ m.dest \notin crashedNodes  \* pointless to fail response going to crashed node
   /\ Reply([m EXCEPT !.success = FALSE], m)
-  /\ messageDrops' = messageDrops + 1
-  /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId, replicationStatus,
+  /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, nextRequestId,
                  clientVars, nodeVars>>
 
 \* Node fault detection on master finds node n to be isolated from the cluster
@@ -830,15 +790,15 @@ NodeFaultDetectionKicksNodeOut(n) ==
   /\ n \notin crashedNodes
   /\ clusterStateOnMaster.routingTable[n] /= Unassigned \* not already unassigned
   /\ clusterStateOnMaster' = FailShard(n, clusterStateOnMaster)
-  /\ UNCHANGED <<crashedNodes, messages, nextRequestId, replicationStatus, clientVars,
-                 nodeVars, messageDrops>>
+  /\ UNCHANGED <<crashedNodes, messages, nextRequestId, clientVars,
+                 nodeVars>>
 
 \* Node n crashes
 CrashNode(n) ==
   /\ n \notin crashedNodes
   /\ crashedNodes' = crashedNodes \cup {n}
-  /\ UNCHANGED <<clusterStateOnMaster, messages, clientVars, nextRequestId, replicationStatus,
-                 nodeVars, messageDrops>>
+  /\ UNCHANGED <<clusterStateOnMaster, messages, clientVars, nextRequestId,
+                 nodeVars>>
 
 \* Master removes crashed node n from its cluster state
 \* (could be combined wih NodeFaultDetectionKicksNodeOut rule)
@@ -846,8 +806,8 @@ RemoveCrashedNodeFromClusterState(n) ==
   /\ n \in crashedNodes
   /\ clusterStateOnMaster.routingTable[n] /= Unassigned \* not already unassigned
   /\ clusterStateOnMaster' = FailShard(n, clusterStateOnMaster)
-  /\ UNCHANGED <<crashedNodes, messages, nextRequestId, replicationStatus, clientVars,
-                 nodeVars, messageDrops>>
+  /\ UNCHANGED <<crashedNodes, messages, nextRequestId, clientVars,
+                 nodeVars>>
 
 \* Defines how the variables may transition.
 Next == \/ \E n \in Nodes : \E docId \in DocumentIds : ClientRequest(n, docId)
@@ -918,10 +878,12 @@ AllCopiesSameContentsOnQuietDown ==
 \* checks if all (acked) responses to client are successfully and correctly stored 
 AllAckedResponsesStored ==
     \A r \in clientResponses : \A n \in Nodes :
-       ActiveShard(n) => /\ r.seq \in DOMAIN tlog[n]
-                         /\ tlog[n][r.seq].id = r.id
-                         /\ tlog[n][r.seq].value = r.value
-                         /\ tlog[n][r.seq].term = r.term
+      /\ r.success = TRUE
+      /\ ActiveShard(n)
+      => /\ r.seq \in DOMAIN tlog[n]
+         /\ tlog[n][r.seq].id = r.id
+         /\ tlog[n][r.seq].value = r.value
+         /\ tlog[n][r.seq].term = r.term
 
 \* checks that the global checkpoint is the same as or below the local checkpoint on each node
 GlobalCheckPointBelowLocalCheckPoints ==
@@ -934,11 +896,6 @@ LocalCheckPointOnNodeHigherThanWhatOthersHave ==
 \* local checkpoint always corresponds to MaxSafeSeq on the node
 LocalCheckPointMatchesMaxSafeSeq ==
   \A n \in Nodes : localCheckPoint[n][n] = MaxSafeSeq(tlog[n])
-
-\* once all messages for a replication request are treated, its status is determined
-ReplicationStatusDeterminedAfterNoMessages == 
-  \A req \in DOMAIN replicationStatus :
-    replicationStatus[req] = Nil => { m \in messages : m.req = req } /= {}
 
 \* routing table is well-formed (has at most one primary)
 WellFormedRoutingTable(routingTable) == Cardinality(Primaries(routingTable)) <= 1
