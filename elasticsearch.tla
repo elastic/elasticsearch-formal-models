@@ -644,8 +644,7 @@ HandleTrimTranslogRequest(n, m) ==
          /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = MaxSafeSeq(tlog'[n])]
          /\ currentTerm' = [currentTerm EXCEPT ![n] = Max({@, m.term})]
          /\ Reply(DefaultResponse(m), m)
-  /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars,
-                 clusterStateOnNode, nextClientValue, nextRequestId, clientResponses,
+  /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, clusterStateOnNode,
                  crashedNodes, messageDrops, nextSeq, globalCheckPoint, replicationStatus>>
 
 \* Helper function for handling responses
@@ -736,7 +735,7 @@ HandleTrimTranslogResponse(n, rn, m) ==
                     globalCheckPoint>>
    /\ messages' = messages \ {m}
    /\ UNCHANGED <<nextClientValue, nextRequestId, crashedNodes, clusterStateOnNode, tlog,
-                  nextSeq, messageDrops, clientResponses, currentTerm>>  
+                  nextSeq, messageDrops, currentTerm>>
 
 \* Cluster state propagated from master is applied to node n
 ApplyClusterStateFromMaster(n) ==
