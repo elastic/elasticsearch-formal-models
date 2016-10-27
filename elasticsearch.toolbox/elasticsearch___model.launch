@@ -22,7 +22,7 @@
 <stringAttribute key="modelComments" value=""/>
 <booleanAttribute key="modelCorrectnessCheckDeadlock" value="false"/>
 <listAttribute key="modelCorrectnessInvariants">
-<listEntry value="1NoActiveMessages /\ CrashHandled /\ ClusterStateAppliedOnAllNodes =&gt; AllCopiesSameContents"/>
+<listEntry value="1AllCopiesSameContentsOnQuietDown"/>
 <listEntry value="1WellFormedRoutingTable(clusterStateOnMaster.routingTable)"/>
 <listEntry value="1GlobalCheckPointBelowLocalCheckPoints"/>
 <listEntry value="1SameTranslogUpToGlobalCheckPoint"/>

@@ -889,10 +889,6 @@ AllAckedResponsesStored ==
 GlobalCheckPointBelowLocalCheckPoints ==
     \A n \in Nodes : globalCheckPoint[n] <= localCheckPoint[n][n]
 
-\* checks that the local checkpoint on a node is higher than what other nodes have stored for that node
-LocalCheckPointOnNodeHigherThanWhatOthersHave ==
-    \A n1, n2 \in Nodes : localCheckPoint[n1][n1] >= localCheckPoint[n2][n1]
-
 \* local checkpoint always corresponds to MaxSafeSeq on the node
 LocalCheckPointMatchesMaxSafeSeq ==
   \A n \in Nodes : localCheckPoint[n][n] = MaxSafeSeq(tlog[n])
