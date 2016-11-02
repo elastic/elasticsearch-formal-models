@@ -401,41 +401,49 @@ MaxConfirmedSeq(ntlog) ==
   IN  CHOOSE i \in (DOMAIN ntlog \cup {0}) : /\ ConfirmedTlogSlot(i+1) = FALSE
                                              /\ \A j \in 1..i : ConfirmedTlogSlot(j)
 
+(* `^\bf\large MarkPC ^'
+   Yields translog where all entries at position strictly larger than "globalCP" (representing the
+   global checkpoint) are marked as "pending confirmation".
 
-(* `^\bf\large FillAndMark ^'
-   Yields translog where all gaps are filled and the pending confirmation marker (\in {TRUE, FALSE})
-   is set for values at position strictly larger than "globalCP" representing the global checkpoint
-
-   Examples: 
+   Example: 
    `.
-      ---------------------   FillAndMark     ---------------------
+      ---------------------   MarkPC          ---------------------
       | 1 | 2 | 3 | 4 | 5 |   ----------->    | 1 | 2 | 3 | 4 | 5 |
-      |-------------------|   globalCP = 2    |-------------------|
-      | x | x |   | x |   |   marker = TRUE   | x | x | x | x |   |
-      | T | T |   | F |   |                   | T | T | T | T |   |
-      ---------------------                   ---------------------
-
-      ---------------------   FillAndMark     ---------------------
-      | 1 | 2 | 3 | 4 | 5 |   ----------->    | 1 | 2 | 3 | 4 | 5 |
-      |-------------------|   globalCP = 3    |-------------------|
-      | x | x | x | x | x |   marker = FALSE  | x | x | x | x | x |
-      | T | T | T | T | T |                   | T | T | T | F | F |
+      |-------------------|   globalCP = 1    |-------------------|
+      | x | x |   | x |   |                   | x | x |   | x |   |
+      | F | F |   | F |   |                   | F | T |   | T |   |
       ---------------------                   ---------------------
    .'
 *)
-FillAndMark(ntlog, globalCP, marker) ==
+MarkPC(ntlog, globalCP) ==
+  [j \in DOMAIN ntlog |-> [ntlog[j] EXCEPT !.pc = IF j > globalCP THEN TRUE ELSE @]]
+
+(* `^\bf\large FillAndUnmarkPC ^'
+   Yields translog where all gaps are filled and the pending confirmation marker is set to FALSE
+   for values at position strictly larger than "globalCP" representing the global checkpoint
+
+   Example: 
+   `.
+      ---------------------   FillAndUnmarkPC ---------------------
+      | 1 | 2 | 3 | 4 | 5 |   ----------->    | 1 | 2 | 3 | 4 | 5 |
+      |-------------------|   globalCP = 1    |-------------------|
+      | x | x |   | x |   |                   | x | x | x | x |   |
+      | T | T |   | F |   |                   | T | F | F | F |   |
+      ---------------------                   ---------------------
+   .'
+*)
+FillAndUnmarkPC(ntlog, globalCP) ==
   [j \in 1..Max(DOMAIN ntlog \cup {0}) |->
     IF j > globalCP THEN
       IF j \in DOMAIN ntlog THEN
-        [ntlog[j] EXCEPT !.pc = marker]
+        [ntlog[j] EXCEPT !.pc = FALSE]
       ELSE
         [id    |-> Nil,
          term  |-> 0,
          value |-> Nil,
-         pc    |-> marker]
+         pc    |-> FALSE]
     ELSE
       ntlog[j]]
-
 
 (* `^\bf\large TrimTlog ^'
    Trim elements from translog with position strictly greater than maxseq and
@@ -528,6 +536,7 @@ ClientRequest(n, docId) ==
        /\ nextRequestId' = nextRequestId + 1
        \* update local checkpoint
        /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = seq]
+       /\ Assert(localCheckPoint'[n][n] = localCheckPoint[n][n] + 1, "localCheckPoint incremented")
        \* send out replication requests
        /\ messages' = messages \cup replRequests
        /\ IF replicas = {} THEN
@@ -542,6 +551,17 @@ ClientRequest(n, docId) ==
             /\ UNCHANGED <<clientResponses>>
   /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, crashedNodes,
                  globalCheckPoint, currentTerm>>
+
+\* Helper function for marking translog entries as pending confirmation if incoming term is higher
+\* than current term on node n.
+MaybeMarkPC(incomingTerm, n) ==
+  IF incomingTerm > currentTerm[n] THEN
+    \* there is a new primary, cannot safely advance local checkpoint
+    \* before resync done, move it back to global checkpoint and add
+    \* pending confirmation marker to all entries above global checkpoint
+    MarkPC(tlog[n], globalCheckPoint[n])
+  ELSE
+    tlog[n]
 
 \* Replication request arrives on node n with message m
 HandleReplicationRequest(n, m) ==
@@ -560,19 +580,8 @@ HandleReplicationRequest(n, m) ==
                                 term  |-> m.sterm,
                                 value |-> m.value,
                                 pc    |-> FALSE]
-             gapsFilledTlog == IF m.rterm > currentTerm[n] THEN
-                                 \* there is a new primary, cannot safely advance local checkpoint
-                                 \* before resync done, move it back to global checkpoint and add
-                                 \* pending confirmation marker to all entries above global checkpoint
-                                 FillAndMark(tlog[n], m.globalCP, TRUE)
-                               ELSE
-                                 tlog[n]
-              \* write request into translog
-              newTlog       == IF m.seq \in DOMAIN gapsFilledTlog /\ 
-                                 m.rterm < gapsFilledTlog[m.seq].term THEN
-                                 gapsFilledTlog
-                               ELSE
-                                 (m.seq :> tlogEntry) @@ gapsFilledTlog
+              \* mark translog entries as pending if higher term and write request into translog
+              newTlog       == (m.seq :> tlogEntry) @@ MaybeMarkPC(m.rterm, n)
               \* recompute local checkpoint
               localCP       == MaxConfirmedSeq(newTlog)
            IN 
@@ -594,18 +603,10 @@ HandleTrimTranslogRequest(n, m) ==
        /\ Reply(FailedResponse(m), m)
        /\ UNCHANGED <<tlog, currentTerm, localCheckPoint>>
      ELSE
-       LET newGlobalCP == globalCheckPoint[n]
-           gapsFilledTlog ==
-             IF m.term > currentTerm[n] THEN
-               \* request comes from a new primary, cannot safely advance local checkpoint
-               \* add pending confirmation marker to all entries after global checkpoint
-               FillAndMark(tlog[n], newGlobalCP, TRUE)
-             ELSE
-               tlog[n]
-       IN
-         /\ tlog' = [tlog EXCEPT ![n] = TrimTlog(gapsFilledTlog, m.maxseq, m.term)]
-         /\ currentTerm' = [currentTerm EXCEPT ![n] = Max({@, m.term})]
-         /\ Reply(DefaultResponse(m), m)
+       \* mark translog entries as pending if higher term and trim translog
+       /\ tlog' = [tlog EXCEPT ![n] = TrimTlog(MaybeMarkPC(m.term, n), m.maxseq, m.term)]
+       /\ currentTerm' = [currentTerm EXCEPT ![n] = m.term]
+       /\ Reply(DefaultResponse(m), m)
   /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, localCheckPoint,
                  clusterStateOnNode, crashedNodes, globalCheckPoint>>
 
@@ -697,7 +698,7 @@ ApplyClusterStateFromMaster(n) ==
          ntlog          == tlog[n]
          globalCP       == globalCheckPoint[n]
          \* fill gaps in tlog and remove pending confirmation marker
-         newTlog        == FillAndMark(ntlog, globalCP, FALSE)
+         newTlog        == FillAndUnmarkPC(ntlog, globalCP)
          replicas       == Replicas(clusterStateOnMaster.routingTable)
          numReplicas    == Cardinality(replicas)
          maxTlogPos     == Max((DOMAIN ntlog) \cup {0})
@@ -724,11 +725,9 @@ ApplyClusterStateFromMaster(n) ==
                              maxseq   |-> maxTlogPos,
                              term     |-> currentTerm'[n],
                              client   |-> FALSE] : rn \in replicas}
-         \* reset local checkpoint for other nodes and calculate new one for current node
-         localCPs       == [[n2 \in Nodes |-> 0] EXCEPT ![n] = MaxConfirmedSeq(newTlog)]
        IN 
          /\ tlog' = [tlog EXCEPT ![n] = newTlog]
-         /\ localCheckPoint' = [localCheckPoint EXCEPT ![n] = localCPs]
+         /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = MaxConfirmedSeq(newTlog)]
          /\ messages' = messages \cup replRequests \cup trimRequests
          /\ nextRequestId' = nextRequestId + numDocs + 1
     ELSE
@@ -736,7 +735,7 @@ ApplyClusterStateFromMaster(n) ==
       /\ IF  clusterStateOnNode[n].routingTable[n] = Replica /\
              clusterStateOnMaster.routingTable[n] = Replica /\
              clusterStateOnMaster.primaryTerm > currentTerm[n] THEN
-           /\ tlog' = [tlog EXCEPT ![n] = FillAndMark(@, globalCheckPoint[n], TRUE)]
+           /\ tlog' = [tlog EXCEPT ![n] = MarkPC(@, globalCheckPoint[n])]
          ELSE
            UNCHANGED <<tlog>>
       /\ UNCHANGED <<messages, nextRequestId, localCheckPoint>>
@@ -865,10 +864,11 @@ AllAckedResponsesStored ==
 GlobalCheckPointBelowLocalCheckPoints ==
     \A n \in Nodes : globalCheckPoint[n] <= MaxConfirmedSeq(tlog[n])
 
-\* local checkpoint always corresponds to MaxConfirmedSeq on the primary node
+\* local checkpoint always corresponds to MaxSeq and MaxConfirmedSeq on the primary node
 LocalCheckPointMatchesMaxConfirmedSeq ==
   \A n \in Nodes : clusterStateOnNode[n].routingTable[n] = Primary
-    => localCheckPoint[n][n] = MaxConfirmedSeq(tlog[n])
+    => /\ localCheckPoint[n][n] = MaxConfirmedSeq(tlog[n])
+       /\ MaxSeq(tlog[n]) = MaxConfirmedSeq(tlog[n])
 
 \* routing table is well-formed (has at most one primary)
 WellFormedRoutingTable(routingTable) == Cardinality(Primaries(routingTable)) <= 1
