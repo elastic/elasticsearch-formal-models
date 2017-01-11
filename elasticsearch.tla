@@ -215,7 +215,8 @@ VARIABLE currentTerm
    .'
 
    The transaction log is modeled as a map from node id to map from sequence number to record type
-   consisting of document id, value to be stored, primary term and safety marker (more on that later).
+   consisting of document id, value to be stored, primary term and "pending confirmation" marker
+   (more on that later).
 *)
 VARIABLE tlog
 
@@ -361,99 +362,88 @@ FailedResponse(m) == [DefaultResponse(m) EXCEPT !.success = FALSE]
 (* When a request comes to a primary, it has to select a slot (the sequence number) to put the
    request into. It corresponds to the slot in the transaction log right after the highest slot
    that's filled.
+   The following function yields the highest slot that's filled in the transaction log, or 0 if
+   no such slot exists.
 *)
-NextSeq(ntlog) == Max(DOMAIN ntlog \cup {0}) + 1
+MaxSeq(ntlog) == Max(DOMAIN ntlog \cup {0})
 
-(* `^\bf\large MaxSafeSeq ^'
+(* `^\bf\large MaxConfirmedSeq ^'
    The local checkpoint is defined as the highest slot in the translog, where all lower slots
    are filled. It is not only holes in the translog that prevent the local checkpoint from moving foward. 
    We actually want to prevent the local checkpoint from moving past slots which are filled but marked as 
-   unsafe. Unsafe entries in the translog are entries that appear after the global checkpoint that are not
+   pending confirmation. Pending entries in the translog are entries that appear after the global checkpoint that are not
    allowed to contribute to the advancement of the local checkpoint until a resyncing phase happens due to 
-   the primary shard changing nodes. Translog entries thus have a marker
+   the primary shard changing nodes. Translog entries thus have a "pc" (pending confirmation) marker
    (\in {TRUE, FALSE}) that says whether the local checkpoint can move past them.
-   This function yields highest sequence number which is safe and where all lower slots are safe as well.
+   This function yields highest sequence number which are not pending confirmation and where
+   all lower slots are not pending confirmation either.
    Yields 0 if no such number exists.
 
    Examples: (T stands for TRUE, F for FALSE) 
    `.
-              ---------------------
-              | 1 | 2 | 3 | 4 | 5 |
-              |-------------------|     MaxSafeSeq = 1
-              | x | x | x | x |   |
-     markers: | T | F | F | T |   |
-              ---------------------
+                  ---------------------
+                  | 1 | 2 | 3 | 4 | 5 |
+                  |-------------------|     MaxConfirmedSeq = 1
+                  | x | x | x | x |   |
+      pc markers: | F | T | T | F |   |
+                  ---------------------
 
-              ---------------------
-              | 1 | 2 | 3 | 4 | 5 |
-              |-------------------|     MaxSafeSeq = 2
-              | x | x |   | x |   |
-     markers: | T | T |   | T |   |
-              ---------------------
+                  ---------------------
+                  | 1 | 2 | 3 | 4 | 5 |
+                  |-------------------|     MaxConfirmedSeq = 2
+                  | x | x |   | x |   |
+      pc markers: | F | F |   | F |   |
+                  ---------------------
    .'
 *)
-MaxSafeSeq(ntlog) ==
-  LET SafeTlogSlot(i) == i \in DOMAIN ntlog /\ ntlog[i].safe
-  IN  CHOOSE i \in (DOMAIN ntlog \cup {0}) : /\ SafeTlogSlot(i+1) = FALSE
-                                             /\ \A j \in 1..i : SafeTlogSlot(j)
+MaxConfirmedSeq(ntlog) ==
+  LET ConfirmedTlogSlot(i) == i \in DOMAIN ntlog /\ ntlog[i].pc = FALSE
+  IN  CHOOSE i \in (DOMAIN ntlog \cup {0}) : /\ ConfirmedTlogSlot(i+1) = FALSE
+                                             /\ \A j \in 1..i : ConfirmedTlogSlot(j)
 
+(* `^\bf\large MarkPC ^'
+   Yields translog where all entries at position strictly larger than "globalCP" (representing the
+   global checkpoint) are marked as "pending confirmation".
 
-(* `^\bf\large FillAndMark ^'
-   Yields translog where all gaps are filled and the safety marker (\in {TRUE, FALSE}) is set for
-   values at position strictly larger than "globalCP" representing the global checkpoint
-
-   Examples: 
+   Example: 
    `.
-      ---------------------   FillAndMark     ---------------------
+      ---------------------   MarkPC          ---------------------
       | 1 | 2 | 3 | 4 | 5 |   ----------->    | 1 | 2 | 3 | 4 | 5 |
-      |-------------------|   globalCP = 2    |-------------------|
-      | x | x |   | x |   |   marker = TRUE   | x | x | x | x |   |
-      | T | T |   | F |   |                   | T | T | T | T |   |
-      ---------------------                   ---------------------
-
-      ---------------------   FillAndMark     ---------------------
-      | 1 | 2 | 3 | 4 | 5 |   ----------->    | 1 | 2 | 3 | 4 | 5 |
-      |-------------------|   globalCP = 3    |-------------------|
-      | x | x | x | x | x |   marker = FALSE  | x | x | x | x | x |
-      | T | T | T | T | T |                   | T | T | T | F | F |
+      |-------------------|   globalCP = 1    |-------------------|
+      | x | x |   | x |   |                   | x | x |   | x |   |
+      | F | F |   | F |   |                   | F | T |   | T |   |
       ---------------------                   ---------------------
    .'
 *)
-FillAndMark(ntlog, globalCP, marker) ==
+MarkPC(ntlog, globalCP) ==
+  [j \in DOMAIN ntlog |-> [ntlog[j] EXCEPT !.pc = IF j > globalCP THEN TRUE ELSE @]]
+
+(* `^\bf\large FillAndUnmarkPC ^'
+   Yields translog where all gaps are filled and the pending confirmation marker is set to FALSE
+   for values at position strictly larger than "globalCP" representing the global checkpoint
+
+   Example: 
+   `.
+      ---------------------   FillAndUnmarkPC ---------------------
+      | 1 | 2 | 3 | 4 | 5 |   ----------->    | 1 | 2 | 3 | 4 | 5 |
+      |-------------------|   globalCP = 1    |-------------------|
+      | x | x |   | x |   |                   | x | x | x | x |   |
+      | T | T |   | F |   |                   | T | F | F | F |   |
+      ---------------------                   ---------------------
+   .'
+*)
+FillAndUnmarkPC(ntlog, globalCP) ==
   [j \in 1..Max(DOMAIN ntlog \cup {0}) |->
     IF j > globalCP THEN
       IF j \in DOMAIN ntlog THEN
-        [ntlog[j] EXCEPT !.safe = marker]
+        [ntlog[j] EXCEPT !.pc = FALSE]
       ELSE
         [id    |-> Nil,
          term  |-> 0,
          value |-> Nil,
-         safe  |-> marker]
+         pc    |-> FALSE]
     ELSE
       ntlog[j]]
-
-
-(* `^\bf\large MarkSafeUpTo ^'
-   Mark translog entries as safe to advance the local checkpoint up to the position "globalCP" (included).
-   When receiving global checkpoint information from the primary, used to mark all entries up to
-   that point as safe.
-
-   Example: 
-   `.
-      ---------------------   MarkSafeUpTo    ---------------------
-      | 1 | 2 | 3 | 4 | 5 |   ----------->    | 1 | 2 | 3 | 4 | 5 |
-      |-------------------|   globalCP = 4    |-------------------|
-      | x | x | x | x |   |                   | x | x | x | x |   |
-      | T | T | F | F |   |                   | T | T | T | T |   |
-      ---------------------                   ---------------------
-   .'
-*)
-MarkSafeUpTo(ntlog, globalCP) ==
-  [j \in DOMAIN ntlog |->
-      IF j <= globalCP THEN
-        [ntlog[j] EXCEPT !.safe = TRUE]
-      ELSE
-        ntlog[j]]
 
 (* `^\bf\large TrimTlog ^'
    Trim elements from translog with position strictly greater than maxseq and
@@ -522,8 +512,8 @@ ClientRequest(n, docId) ==
        tlogEntry    == [id    |-> docId,
                         term  |-> primaryTerm,
                         value |-> nextClientValue,
-                        safe  |-> TRUE]
-       seq          == NextSeq(tlog[n])
+                        pc    |-> FALSE]
+       seq          == MaxSeq(tlog[n]) + 1
        \* create replication requests for each replica that the primary knows about
        replRequests == {([request  |-> TRUE,
                           method   |-> Replication,
@@ -544,8 +534,9 @@ ClientRequest(n, docId) ==
        /\ nextClientValue' = nextClientValue + 1
        \* set next unique key to use for replication requests so that we can relate responses
        /\ nextRequestId' = nextRequestId + 1
-       \* update local checkpoint (on primary this is equivalent to nextSeq[n] - 1)
-       /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = @ + 1]
+       \* update local checkpoint
+       /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = seq]
+       /\ Assert(localCheckPoint'[n][n] = localCheckPoint[n][n] + 1, "localCheckPoint incremented")
        \* send out replication requests
        /\ messages' = messages \cup replRequests
        /\ IF replicas = {} THEN
@@ -560,6 +551,17 @@ ClientRequest(n, docId) ==
             /\ UNCHANGED <<clientResponses>>
   /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, crashedNodes,
                  globalCheckPoint, currentTerm>>
+
+\* Helper function for marking translog entries as pending confirmation if incoming term is higher
+\* than current term on node n.
+MaybeMarkPC(incomingTerm, n) ==
+  IF incomingTerm > currentTerm[n] THEN
+    \* there is a new primary, cannot safely advance local checkpoint
+    \* before resync done, move it back to global checkpoint and add
+    \* pending confirmation marker to all entries above global checkpoint
+    MarkPC(tlog[n], globalCheckPoint[n])
+  ELSE
+    tlog[n]
 
 \* Replication request arrives on node n with message m
 HandleReplicationRequest(n, m) ==
@@ -577,35 +579,18 @@ HandleReplicationRequest(n, m) ==
              tlogEntry      == [id    |-> m.id,
                                 term  |-> m.sterm,
                                 value |-> m.value,
-                                safe  |-> TRUE]
-             \* update global checkpoint if needed
-             newGlobalCP    == Max({globalCheckPoint[n], m.globalCP})
-             \* mark all slots in translog up to global checkpoint as safe
-             \* (to ensure that local checkpoint >= global checkpoint)
-             safeMarkedTlog == MarkSafeUpTo(tlog[n], newGlobalCP)
-             gapsFilledTlog == IF m.rterm > currentTerm[n] THEN
-                                 \* there is a new primary, cannot safely advance local checkpoint
-                                 \* before resync done, move it back to global checkpoint and mark
-                                 \* all entries above global checkpoint as unsafe
-                                 FillAndMark(safeMarkedTlog, newGlobalCP, FALSE)
-                               ELSE
-                                 safeMarkedTlog
-              \* write request into translog
-              newTlog       == IF m.seq \in DOMAIN gapsFilledTlog /\ 
-                                 m.rterm < gapsFilledTlog[m.seq].term THEN
-                                 gapsFilledTlog
-                               ELSE
-                                 (m.seq :> tlogEntry) @@ gapsFilledTlog
+                                pc    |-> FALSE]
+              \* mark translog entries as pending if higher term and write request into translog
+              newTlog       == (m.seq :> tlogEntry) @@ MaybeMarkPC(m.rterm, n)
               \* recompute local checkpoint
-              localCP       == MaxSafeSeq(newTlog)
+              localCP       == MaxConfirmedSeq(newTlog)
            IN 
              /\ tlog' = [tlog EXCEPT ![n] = newTlog]
-             /\ currentTerm' = [currentTerm EXCEPT ![n] = Max({@, m.rterm})]
-             /\ globalCheckPoint' = [globalCheckPoint EXCEPT ![n] = newGlobalCP]
-             /\ localCheckPoint'  = [localCheckPoint EXCEPT ![n][n] = localCP]
+             /\ currentTerm' = [currentTerm EXCEPT ![n] = m.rterm]
+             /\ globalCheckPoint' = [globalCheckPoint EXCEPT ![n] = Max({@, m.globalCP})]
              /\ Reply([DefaultResponse(m) EXCEPT !.localCP = localCP], m)
         /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, nextClientValue, nextRequestId,
-                       clientResponses, crashedNodes>>
+                       clientResponses, crashedNodes, localCheckPoint>>
 
 \* Trim translog request arrives on node n with message m
 HandleTrimTranslogRequest(n, m) ==
@@ -618,20 +603,11 @@ HandleTrimTranslogRequest(n, m) ==
        /\ Reply(FailedResponse(m), m)
        /\ UNCHANGED <<tlog, currentTerm, localCheckPoint>>
      ELSE
-       LET newGlobalCP == globalCheckPoint[n]
-           gapsFilledTlog ==
-             IF m.term > currentTerm[n] THEN
-               \* request comes from a new primary, cannot safely advance local checkpoint
-               \* past global checkpoint before entries confirmed
-               FillAndMark(tlog[n], newGlobalCP, FALSE)
-             ELSE
-               tlog[n]
-       IN
-         /\ tlog' = [tlog EXCEPT ![n] = TrimTlog(gapsFilledTlog, m.maxseq, m.term)]
-         /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = MaxSafeSeq(tlog'[n])]
-         /\ currentTerm' = [currentTerm EXCEPT ![n] = Max({@, m.term})]
-         /\ Reply(DefaultResponse(m), m)
-  /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars,
+       \* mark translog entries as pending if higher term and trim translog
+       /\ tlog' = [tlog EXCEPT ![n] = TrimTlog(MaybeMarkPC(m.term, n), m.maxseq, m.term)]
+       /\ currentTerm' = [currentTerm EXCEPT ![n] = m.term]
+       /\ Reply(DefaultResponse(m), m)
+  /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, localCheckPoint,
                  clusterStateOnNode, crashedNodes, globalCheckPoint>>
 
 \* Helper function for handling replication responses
@@ -711,15 +687,18 @@ ApplyClusterStateFromMaster(n) ==
   /\ n \notin crashedNodes
   /\ clusterStateOnNode[n] /= clusterStateOnMaster
   /\ clusterStateOnNode' = [clusterStateOnNode EXCEPT ![n] = clusterStateOnMaster]
-  /\ currentTerm' = [currentTerm EXCEPT ![n] = Max({@, clusterStateOnMaster.primaryTerm})]
+  \* Java implementation should update currentTerm to Max({@, clusterStateOnMaster.primaryTerm})
+  \* as an old cluster state might be applied after node has received a replication request
+  \* with higher term
+  /\ currentTerm' = [currentTerm EXCEPT ![n] = clusterStateOnMaster.primaryTerm]
   /\ IF ShardWasPromotedToPrimary(n, clusterStateOnMaster.routingTable,
          clusterStateOnNode[n].routingTable) THEN
        \* shard promoted to primary, resync with replicas
        LET
          ntlog          == tlog[n]
          globalCP       == globalCheckPoint[n]
-         \* fill gaps in tlog and mark all entries as safe
-         newTlog        == FillAndMark(ntlog, globalCP, TRUE)
+         \* fill gaps in tlog and remove pending confirmation marker
+         newTlog        == FillAndUnmarkPC(ntlog, globalCP)
          replicas       == Replicas(clusterStateOnMaster.routingTable)
          numReplicas    == Cardinality(replicas)
          maxTlogPos     == Max((DOMAIN ntlog) \cup {0})
@@ -736,7 +715,7 @@ ApplyClusterStateFromMaster(n) ==
                               id       |-> newTlog[globalCP + i].id,
                               value    |-> newTlog[globalCP + i].value,
                               client   |-> FALSE, \* request not initiated by client
-                              globalCP |-> globalCP]) : i \in 1..numDocs, rn \in replicas}
+                              globalCP |-> globalCheckPoint[rn]]) : i \in 1..numDocs, rn \in replicas}
          \* send trim request to replicas
          trimRequests   == {[request  |-> TRUE,
                              method   |-> TrimTranslog,
@@ -746,11 +725,9 @@ ApplyClusterStateFromMaster(n) ==
                              maxseq   |-> maxTlogPos,
                              term     |-> currentTerm'[n],
                              client   |-> FALSE] : rn \in replicas}
-         \* reset local checkpoint for other nodes and calculate new one for current node
-         localCPs       == [[n2 \in Nodes |-> globalCP] EXCEPT ![n] = MaxSafeSeq(newTlog)]
        IN 
          /\ tlog' = [tlog EXCEPT ![n] = newTlog]
-         /\ localCheckPoint' = [localCheckPoint EXCEPT ![n] = localCPs]
+         /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = MaxConfirmedSeq(newTlog)]
          /\ messages' = messages \cup replRequests \cup trimRequests
          /\ nextRequestId' = nextRequestId + numDocs + 1
     ELSE
@@ -758,12 +735,10 @@ ApplyClusterStateFromMaster(n) ==
       /\ IF  clusterStateOnNode[n].routingTable[n] = Replica /\
              clusterStateOnMaster.routingTable[n] = Replica /\
              clusterStateOnMaster.primaryTerm > currentTerm[n] THEN
-           /\ tlog' = [tlog EXCEPT ![n] = FillAndMark(@, globalCheckPoint[n], FALSE)]
-           \* recompute local checkpoint
-           /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = MaxSafeSeq(tlog'[n])] 
+           /\ tlog' = [tlog EXCEPT ![n] = MarkPC(@, globalCheckPoint[n])]
          ELSE
-           UNCHANGED <<tlog, localCheckPoint>>
-      /\ UNCHANGED <<messages, nextRequestId>>
+           UNCHANGED <<tlog>>
+      /\ UNCHANGED <<messages, nextRequestId, localCheckPoint>>
   /\ UNCHANGED <<crashedNodes, clusterStateOnMaster, clientVars,
                  globalCheckPoint>>
 
@@ -842,8 +817,8 @@ ActiveShard(n) == clusterStateOnMaster.routingTable[n] /= Unassigned
 \* everything in the translog up to and including slot i
 UpToSlot(ntlog, i) == [j \in 1..i |-> ntlog[j]]
 
-\* copy of translog, where we assume all entries are marked safe
-ExceptSafe(ntlog) == [j \in DOMAIN ntlog |-> [ntlog[j] EXCEPT !.safe = TRUE]]
+\* copy of translog, where we ignore the pending confirmation marker
+ExceptPC(ntlog) == [j \in DOMAIN ntlog |-> [r \in DOMAIN ntlog[j] \ {"pc"} |-> ntlog[j][r] ]]
 
 \* all shard copies of non-crashed nodes contain same data
 AllCopiesSameContents ==
@@ -851,7 +826,7 @@ AllCopiesSameContents ==
        /\ n1 /= n2
        /\ ActiveShard(n1)
        /\ ActiveShard(n2) 
-    => ExceptSafe(tlog[n1]) = ExceptSafe(tlog[n2])
+    => ExceptPC(tlog[n1]) = ExceptPC(tlog[n2])
 
 ----
 
@@ -865,8 +840,8 @@ SameTranslogUpToGlobalCheckPoint ==
        /\ n1 /= n2
        /\ ActiveShard(n1)
        /\ ActiveShard(n2)
-    => ExceptSafe(UpToSlot(tlog[n1], globalCheckPoint[n1])) = 
-         ExceptSafe(UpToSlot(tlog[n2], globalCheckPoint[n1]))
+    => ExceptPC(UpToSlot(tlog[n1], globalCheckPoint[n1])) = 
+         ExceptPC(UpToSlot(tlog[n2], globalCheckPoint[n1]))
 
 \* checks if the translog for all nodes is eventually the same
 AllCopiesSameContentsOnQuietDown ==
@@ -887,11 +862,13 @@ AllAckedResponsesStored ==
 
 \* checks that the global checkpoint is the same as or below the local checkpoint on each node
 GlobalCheckPointBelowLocalCheckPoints ==
-    \A n \in Nodes : globalCheckPoint[n] <= localCheckPoint[n][n]
+    \A n \in Nodes : globalCheckPoint[n] <= MaxConfirmedSeq(tlog[n])
 
-\* local checkpoint always corresponds to MaxSafeSeq on the node
-LocalCheckPointMatchesMaxSafeSeq ==
-  \A n \in Nodes : localCheckPoint[n][n] = MaxSafeSeq(tlog[n])
+\* local checkpoint always corresponds to MaxSeq and MaxConfirmedSeq on the primary node
+LocalCheckPointMatchesMaxConfirmedSeq ==
+  \A n \in Nodes : clusterStateOnNode[n].routingTable[n] = Primary
+    => /\ localCheckPoint[n][n] = MaxConfirmedSeq(tlog[n])
+       /\ MaxSeq(tlog[n]) = MaxConfirmedSeq(tlog[n])
 
 \* routing table is well-formed (has at most one primary)
 WellFormedRoutingTable(routingTable) == Cardinality(Primaries(routingTable)) <= 1
