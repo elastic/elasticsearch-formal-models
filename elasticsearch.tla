@@ -587,7 +587,7 @@ HandleReplicationRequest(n, m) ==
            IN 
              /\ tlog' = [tlog EXCEPT ![n] = newTlog]
              /\ currentTerm' = [currentTerm EXCEPT ![n] = m.rterm]
-             /\ globalCheckPoint' = [globalCheckPoint EXCEPT ![n] = m.globalCP]
+             /\ globalCheckPoint' = [globalCheckPoint EXCEPT ![n] = Max({@, m.globalCP})]
              /\ Reply([DefaultResponse(m) EXCEPT !.localCP = localCP], m)
         /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, nextClientValue, nextRequestId,
                        clientResponses, crashedNodes, localCheckPoint>>
