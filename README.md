@@ -1,6 +1,8 @@
 # TLA+ Model of the Elasticsearch data replication approach
 
-This repository mainly consists of two files:
+The repository formalizes research done as to how data replication will work in future versions of [Elasticsearch](https://github.com/elastic/elasticsearch) and is directly related to [ongoing implementation efforts](https://github.com/elastic/elasticsearch/issues/10708). We consider this work-in-progress: Model as well as implementation are still evolving and might differ in substantial ways. The formal model mainly serves to illustrate some of the high-level concepts and helps to validate resiliency-related aspects of the approach.
+
+The model consists of two files:
 
 - [TLA+ specification](elasticsearch.tla)
 - [TLC model checking configuration](elasticsearch.toolbox/elasticsearch___model.launch)

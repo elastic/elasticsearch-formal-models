@@ -2,9 +2,15 @@
 TLA+ Model of the Elasticsearch data replication approach ^'
 -------------------------------------------------------------------------------------
 
-This file gives a formal specification of the data replication model in Elasticsearch. An index, 
-which is a collection of documents, can be divided into multiple pieces, known as shards, each of 
-which can be stored on different machines. This approach of horizontal scaling enables Elasticsearch 
+This file provides a formal specification of how data replication will work in future versions of
+Elasticsearch. We consider this work-in-progress: Model as well as implementation are still evolving
+and might differ in substantial ways.
+
+Introduction
+------------
+
+An index, which is a collection of documents, can be divided into multiple pieces, known as shards,
+each of which can be stored on different machines. This approach of horizontal scaling enables Elasticsearch
 to store much larger indices than could fit on a single machine. To ensure high availability and 
 scale out read access, shards are usually also replicated onto multiple machines. The main copy 
 is called the primary, all other copies are simply called replicas. The number of primary shards 
@@ -18,8 +24,8 @@ that is backed by a consensus module. The TLA+ specification does not model the 
 assumes that this component is working correctly. It shows however how data replication integrates with 
 the consensus module to achieve its guarantees.
 
-Quick overview of the data replication model
---------------------------------------------
+How data is replicated
+----------------------
 
 Clients send requests to an arbitrary node in the cluster. The node then routes the request to the
 node in the cluster that has the primary shard for the corresponding document id. The document is
@@ -27,35 +33,41 @@ indexed at the primary and then replicated concurrently to the replicas. The rep
 document and confirm successful replication to the primary. The primary then acknowledges successful
 replication to the client.
 
-What's covered / not covered
---------------------------------------
+What's covered / not covered in this model
+------------------------------------------
 
 Failures covered by the model:
 
 - node crashes
+
 - disconnects between nodes on a per request basis
 
 Also covered:
 
-- cluster state batching / asynchronous application (each node applies the cluster state at different times)
-- network delays: messages can arrive out-of-order and be arbitrarily delayed
+- cluster state batching / asynchronous application (each node applies the cluster state, which is
+the state backed by the consensus model, at different points in time)
 
+- network delays: messages can arrive out-of-order and be delayed
 
-Limitations:
+Limitations of the model:
 
 - shard initialization / recovery is not modeled: the model initially assumes shards to be started.
 When a shard fails, it is not reallocated / reassigned to another node but stays unassigned.
 When a primary shard fails, a random replica is promoted to primary (if replica exists).
+
 - only the transaction log is modeled. Lucene store as an optimistic consumer of the transaction log
 is not modeled.
-- adding nodes to the cluster is not modeled, whereas in Elasticsearch, nodes can arbitrarily 
+
+- adding nodes to the cluster is not modeled, whereas in Elasticsearch, nodes can dynamically 
 be added to the cluster and those nodes will share in the hosting of shard data (shard data is 
 moved to the new node through the process of recovery, mentioned above, which is also not modeled).
 
-Divergence from current Java implementation:
+Other differences between model and current Java implementation:
 
 - local and global checkpoint information is broadcasted by piggybacking on the replication
 messages. The Java implementation uses dedicated requests for that.
+
+- ...
 
 
 ------------------------------ MODULE elasticsearch ---------------------------------
