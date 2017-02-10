@@ -1,6 +1,6 @@
-elasticsearch.toolbox/model
-elasticsearch.pdf
-elasticsearch.toolbox/elasticsearch.aux
-elasticsearch.toolbox/elasticsearch.log
-elasticsearch.toolbox/elasticsearch.pdf
-elasticsearch.toolbox/elasticsearch.tex
+*.toolbox/model
+*.pdf
+*.toolbox/*.aux
+*.toolbox/*.log
+*.toolbox/*.pdf
+*.toolbox/*.tex
