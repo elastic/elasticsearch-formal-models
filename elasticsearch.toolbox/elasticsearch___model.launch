@@ -7,6 +7,7 @@
 <booleanAttribute key="dfidMode" value="false"/>
 <intAttribute key="distributedFPSetCount" value="0"/>
 <stringAttribute key="distributedNetworkInterface" value="192.168.178.34"/>
+<intAttribute key="distributedNodesCount" value="1"/>
 <stringAttribute key="distributedTLC" value="off"/>
 <stringAttribute key="distributedTLCVMArgs" value=""/>
 <intAttribute key="fpBits" value="0"/>
@@ -18,7 +19,7 @@
 <stringAttribute key="modelBehaviorNext" value="Next"/>
 <stringAttribute key="modelBehaviorSpec" value="Spec"/>
 <intAttribute key="modelBehaviorSpecType" value="2"/>
-<stringAttribute key="modelBehaviorVars" value="nextClientValue, clusterStateOnMaster, globalCheckPoint, tlog, messages, clientResponses, crashedNodes, currentTerm, clusterStateOnNode, nextRequestId, localCheckPoint"/>
+<stringAttribute key="modelBehaviorVars" value="nextClientValue, clusterStateOnMaster, globalCheckPoint, tlog, messages, clientResponses, currentTerm, clusterStateOnNode, nextRequestId, localCheckPoint"/>
 <stringAttribute key="modelComments" value=""/>
 <booleanAttribute key="modelCorrectnessCheckDeadlock" value="false"/>
 <listAttribute key="modelCorrectnessInvariants">
@@ -46,7 +47,7 @@
 <listEntry value="Replication;;Replication;1;0"/>
 <listEntry value="TrimTranslog;;TrimTranslog;1;0"/>
 </listAttribute>
-<stringAttribute key="modelParameterContraint" value="nextClientValue &lt;= 3"/>
+<stringAttribute key="modelParameterContraint" value="StateConstraint"/>
 <listAttribute key="modelParameterDefinitions"/>
 <stringAttribute key="modelParameterModelValues" value="{}"/>
 <stringAttribute key="modelParameterNewDefinitions" value=""/>
