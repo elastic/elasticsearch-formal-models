@@ -46,6 +46,7 @@
 <listEntry value="DocumentIds;;{id1, id2};1;1"/>
 <listEntry value="Replication;;Replication;1;0"/>
 <listEntry value="TrimTranslog;;TrimTranslog;1;0"/>
+<listEntry value="SendMasterState;;SendMasterState;1;0"/>
 </listAttribute>
 <stringAttribute key="modelParameterContraint" value="StateConstraint"/>
 <listAttribute key="modelParameterDefinitions"/>
