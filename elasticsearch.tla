@@ -108,8 +108,10 @@ CONSTANTS DocumentIds
    The model currently supports two RPC methods, one to replicate data from the primary to the 
    replicas and another one to trim the translog (explained later). The reroute logic for rerouting
    requests to the primary is not modeled as it has no impact on consistency/durability guarantees.
+   
+   There is also a fire-and-forget method for the master to send its state to a node.
 *) 
-CONSTANTS Replication, TrimTranslog
+CONSTANTS Replication, TrimTranslog, SendMasterState
 
 (* Shard allocation is determined by the master and broadcasted to the data nodes in the form of a
    routing table, which is a map from node id to one of {Primary, Replica, Unassigned}, denoting 
@@ -675,14 +677,14 @@ HandleTrimTranslogResponse(n, rn, m) ==
    /\ UNCHANGED <<nextClientValue, nextRequestId, nodeVars, clientResponses>>
 
 \* Cluster state propagated from master is applied to node n
-ApplyClusterStateFromMaster(n) ==
-  /\ clusterStateOnNode[n] /= clusterStateOnMaster
-  /\ clusterStateOnNode' = [clusterStateOnNode EXCEPT ![n] = clusterStateOnMaster]
-  \* Java implementation should update currentTerm to Max({@, clusterStateOnMaster.primaryTerm})
+ApplyClusterStateFromMaster(n, receivedClusterState) ==
+  /\ clusterStateOnNode[n] /= receivedClusterState
+  /\ clusterStateOnNode' = [clusterStateOnNode EXCEPT ![n] = receivedClusterState]
+  \* Java implementation should update currentTerm to Max({@, receivedClusterState.primaryTerm})
   \* as an old cluster state might be applied after node has received a replication request
   \* with higher term
-  /\ currentTerm' = [currentTerm EXCEPT ![n] = clusterStateOnMaster.primaryTerm]
-  /\ IF ShardWasPromotedToPrimary(n, clusterStateOnMaster.routingTable,
+  /\ currentTerm' = [currentTerm EXCEPT ![n] = receivedClusterState.primaryTerm]
+  /\ IF ShardWasPromotedToPrimary(n, receivedClusterState.routingTable,
          clusterStateOnNode[n].routingTable) THEN
        \* shard promoted to primary, resync with replicas
        LET
@@ -690,7 +692,7 @@ ApplyClusterStateFromMaster(n) ==
          globalCP       == globalCheckPoint[n]
          \* fill gaps in tlog and remove pending confirmation marker
          newTlog        == FillAndUnmarkPC(ntlog, globalCP)
-         replicas       == Replicas(clusterStateOnMaster.routingTable)
+         replicas       == Replicas(receivedClusterState.routingTable)
          numReplicas    == Cardinality(replicas)
          maxTlogPos     == Max((DOMAIN ntlog) \cup {0})
          numDocs        == maxTlogPos - globalCP
@@ -724,15 +726,29 @@ ApplyClusterStateFromMaster(n) ==
     ELSE
       \* check if another shard was promoted to primary
       /\ IF  clusterStateOnNode[n].routingTable[n] = Replica /\
-             clusterStateOnMaster.routingTable[n] = Replica /\
-             clusterStateOnMaster.primaryTerm > currentTerm[n] THEN
+             receivedClusterState.routingTable[n] = Replica /\
+             receivedClusterState.primaryTerm > currentTerm[n] THEN
            /\ tlog' = [tlog EXCEPT ![n] = MarkPC(@, globalCheckPoint[n])]
          ELSE
            UNCHANGED <<tlog>>
-      /\ UNCHANGED <<messages, nextRequestId, localCheckPoint>>
+      /\ UNCHANGED <<nextRequestId, localCheckPoint>>
   /\ UNCHANGED <<clusterStateOnMaster, clientVars,
                  globalCheckPoint>>
 
+\* Handle the receipt of new state from the master
+HandleReceiveMasterState(n, m) ==
+   /\ m.method = SendMasterState
+   /\ messages' = messages \ {m}
+   /\ ApplyClusterStateFromMaster(n, m.sentClusterState)
+
+\* The master sends a message containing its current state to a node.
+MasterSendsStateTo(n) ==
+   /\ messages' = messages \cup {[method           |-> SendMasterState,
+                                  dest             |-> n,
+                                  request          |-> Nil,
+                                  req              |-> Nil,
+                                  sentClusterState |-> clusterStateOnMaster]}
+  /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, nodeVars>>
 
 \* Fail request message
 FailRequestMessage(m) ==
@@ -761,7 +777,8 @@ Next == \/ \E n \in Nodes : \E docId \in DocumentIds : ClientRequest(n, docId)
         \/ \E m \in messages : HandleTrimTranslogResponse(m.dest, m.source, m)
         \/ \E m \in messages : FailRequestMessage(m)
         \/ \E m \in messages : FailResponseMessage(m)
-        \/ \E n \in Nodes : ApplyClusterStateFromMaster(n)
+        \/ \E n \in Nodes : MasterSendsStateTo(n)
+        \/ \E m \in messages : HandleReceiveMasterState(m.dest, m)
         \/ \E n \in Nodes : NodeFaultDetectionKicksNodeOut(n)
 
 ----
