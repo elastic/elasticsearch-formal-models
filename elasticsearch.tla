@@ -833,8 +833,11 @@ LocalCheckPointMatchesMaxConfirmedSeq ==
     => /\ localCheckPoint[n][n] = MaxConfirmedSeq(tlog[n])
        /\ MaxSeq(tlog[n]) = MaxConfirmedSeq(tlog[n])
 
-\* routing table is well-formed (has at most one primary)
-WellFormedRoutingTable(routingTable) == Cardinality(Primaries(routingTable)) <= 1
+\* routing table is well-formed (has at most one primary, and has no replicas if no primaries)
+WellFormedRoutingTable(routingTable) ==
+  /\ Cardinality(Primaries(routingTable)) <= 1
+  /\ (   Cardinality(Primaries(routingTable)) = 0
+      => Cardinality(Assigned (routingTable)) = 0)
 
 StateConstraint == nextClientValue <= 3 /\ Cardinality(messages) <= 5
 
