@@ -839,6 +839,9 @@ WellFormedRoutingTable(routingTable) ==
   /\ (   Cardinality(Primaries(routingTable)) = 0
       => Cardinality(Assigned (routingTable)) = 0)
 
-StateConstraint == nextClientValue <= 3 /\ Cardinality(messages) <= 5
+StateConstraint ==
+  /\ nextClientValue <= 3
+  /\ Cardinality(messages) <= 5
+  /\ 0 < Cardinality(Assigned (clusterStateOnMaster.routingTable))
 
 =============================================================================
