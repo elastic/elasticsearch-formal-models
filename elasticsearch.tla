@@ -64,8 +64,8 @@ moved to the new node through the process of recovery, mentioned above, which is
 
 Other differences between model and current Java implementation:
 
-- local and global checkpoint information is broadcasted by piggybacking on the replication
-messages. The Java implementation uses dedicated requests for that.
+- the Java implementation uses zero-based numbering for sequence numbers whereas the TLA+ model
+starts from one, as this is the natural way to access the first element of a sequence in TLA+.
 
 - ...
 
@@ -432,14 +432,14 @@ MarkPC(ntlog, globalCP) ==
       ---------------------                   ---------------------
    .'
 *)
-FillAndUnmarkPC(ntlog, globalCP) ==
+FillAndUnmarkPC(ntlog, storedTerm, globalCP) ==
   [j \in 1..Max(DOMAIN ntlog \cup {0}) |->
     IF j > globalCP THEN
       IF j \in DOMAIN ntlog THEN
         [ntlog[j] EXCEPT !.pc = FALSE]
       ELSE
         [id    |-> Nil,
-         term  |-> 0,
+         term  |-> storedTerm,
          value |-> Nil,
          pc    |-> FALSE]
     ELSE
@@ -551,12 +551,12 @@ ClientRequest(n, docId) ==
 
 \* Helper function for marking translog entries as pending confirmation if incoming term is higher
 \* than current term on node n.
-MaybeMarkPC(incomingTerm, n) ==
+MaybeMarkPC(incomingTerm, n, globalCP) ==
   IF incomingTerm > currentTerm[n] THEN
     \* there is a new primary, cannot safely advance local checkpoint
     \* before resync done, move it back to global checkpoint and add
     \* pending confirmation marker to all entries above global checkpoint
-    MarkPC(tlog[n], globalCheckPoint[n])
+    MarkPC(tlog[n], globalCP)
   ELSE
     tlog[n]
 
@@ -571,18 +571,19 @@ HandleReplicationRequest(n, m) ==
         /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, nodeVars>>
       ELSE
         /\ LET
-             tlogEntry      == [id    |-> m.id,
-                                term  |-> m.sterm,
-                                value |-> m.value,
-                                pc    |-> FALSE]
-              \* mark translog entries as pending if higher term and write request into translog
-              newTlog       == (m.seq :> tlogEntry) @@ MaybeMarkPC(m.rterm, n)
-              \* recompute local checkpoint
-              localCP       == MaxConfirmedSeq(newTlog)
+             tlogEntry     == [id    |-> m.id,
+                               term  |-> m.sterm,
+                               value |-> m.value,
+                               pc    |-> FALSE]
+             newGlobalCP   == Max({m.globalCP, globalCheckPoint[n]})
+             \* mark translog entries as pending if higher term and write request into translog
+             newTlog       == (m.seq :> tlogEntry) @@ MaybeMarkPC(m.rterm, n, newGlobalCP)
+             \* recompute local checkpoint
+             localCP       == MaxConfirmedSeq(newTlog)
            IN 
              /\ tlog' = [tlog EXCEPT ![n] = newTlog]
              /\ currentTerm' = [currentTerm EXCEPT ![n] = m.rterm]
-             /\ globalCheckPoint' = [globalCheckPoint EXCEPT ![n] = Max({@, m.globalCP})]
+             /\ globalCheckPoint' = [globalCheckPoint EXCEPT ![n] = newGlobalCP]
              /\ Reply([DefaultResponse(m) EXCEPT !.localCP = localCP], m)
         /\ UNCHANGED <<clusterStateOnMaster, clusterStateOnNode, nextClientValue, nextRequestId,
                        clientResponses, localCheckPoint>>
@@ -595,14 +596,19 @@ HandleTrimTranslogRequest(n, m) ==
        \* don't handle requests with lower term than we have
        \* lower term means that it's coming from a primary that has since been demoted
        /\ Reply(FailedResponse(m), m)
-       /\ UNCHANGED <<tlog, currentTerm, localCheckPoint>>
+       /\ UNCHANGED <<tlog, globalCheckPoint, currentTerm>>
      ELSE
-       \* mark translog entries as pending if higher term and trim translog
-       /\ tlog' = [tlog EXCEPT ![n] = TrimTlog(MaybeMarkPC(m.term, n), m.maxseq, m.term)]
-       /\ currentTerm' = [currentTerm EXCEPT ![n] = m.term]
-       /\ Reply(DefaultResponse(m), m)
+       /\ LET
+            newGlobalCP   == Max({m.globalCP, globalCheckPoint[n]})
+            \* mark translog entries as pending if higher term and trim translog
+            newTlog       == TrimTlog(MaybeMarkPC(m.term, n, newGlobalCP), m.maxseq, m.term)
+          IN
+            /\ tlog' = [tlog EXCEPT ![n] = newTlog]
+            /\ globalCheckPoint' = [globalCheckPoint EXCEPT ![n] = newGlobalCP]
+            /\ currentTerm' = [currentTerm EXCEPT ![n] = m.term]
+            /\ Reply(DefaultResponse(m), m)
   /\ UNCHANGED <<clusterStateOnMaster, nextRequestId, clientVars, localCheckPoint,
-                 clusterStateOnNode, globalCheckPoint>>
+                 clusterStateOnNode>>
 
 \* Helper function for handling replication responses
 FinishIfNeeded(m) ==
@@ -678,58 +684,51 @@ HandleTrimTranslogResponse(n, rn, m) ==
 ApplyClusterStateFromMaster(n) ==
   /\ clusterStateOnNode[n] /= clusterStateOnMaster
   /\ clusterStateOnNode' = [clusterStateOnNode EXCEPT ![n] = clusterStateOnMaster]
-  \* Java implementation should update currentTerm to Max({@, clusterStateOnMaster.primaryTerm})
-  \* as an old cluster state might be applied after node has received a replication request
-  \* with higher term
-  /\ currentTerm' = [currentTerm EXCEPT ![n] = clusterStateOnMaster.primaryTerm]
   /\ IF ShardWasPromotedToPrimary(n, clusterStateOnMaster.routingTable,
          clusterStateOnNode[n].routingTable) THEN
        \* shard promoted to primary, resync with replicas
        LET
          ntlog          == tlog[n]
          globalCP       == globalCheckPoint[n]
+         newTerm        == clusterStateOnMaster.primaryTerm
          \* fill gaps in tlog and remove pending confirmation marker
-         newTlog        == FillAndUnmarkPC(ntlog, globalCP)
+         newTlog        == FillAndUnmarkPC(ntlog, newTerm, globalCP)
          replicas       == Replicas(clusterStateOnMaster.routingTable)
          numReplicas    == Cardinality(replicas)
-         maxTlogPos     == Max((DOMAIN ntlog) \cup {0})
-         numDocs        == maxTlogPos - globalCP
+         startSeq       == globalCP + 1
+         endSeq         == Max((DOMAIN ntlog) \cup {0})
+         numDocs        == endSeq + 1 - startSeq
          \* resend all translog entries above global checkpoint to replicas
          replRequests   == {([request  |-> TRUE,
                               method   |-> Replication,
                               source   |-> n,
                               dest     |-> rn,
-                              req      |-> nextRequestId + i - 1,
-                              seq      |-> globalCP + i,
-                              rterm    |-> currentTerm'[n], \* current term when issuing request
-                              sterm    |-> newTlog[globalCP + i].term, \* stored term for entry
-                              id       |-> newTlog[globalCP + i].id,
-                              value    |-> newTlog[globalCP + i].value,
+                              req      |-> nextRequestId + (i - startSeq),
+                              seq      |-> i,
+                              rterm    |-> newTerm, \* new term when issuing request
+                              sterm    |-> newTlog[i].term, \* stored term for entry
+                              id       |-> newTlog[i].id,
+                              value    |-> newTlog[i].value,
                               client   |-> FALSE, \* request not initiated by client
-                              globalCP |-> globalCheckPoint[rn]]) : i \in 1..numDocs, rn \in replicas}
+                              globalCP |-> globalCP]) : i \in startSeq..endSeq, rn \in replicas}
          \* send trim request to replicas
          trimRequests   == {[request  |-> TRUE,
                              method   |-> TrimTranslog,
                              source   |-> n,
                              dest     |-> rn,
                              req      |-> nextRequestId + numDocs,
-                             maxseq   |-> maxTlogPos,
-                             term     |-> currentTerm'[n],
-                             client   |-> FALSE] : rn \in replicas}
-       IN 
+                             maxseq   |-> endSeq,
+                             term     |-> newTerm,
+                             client   |-> FALSE,
+                             globalCP |-> globalCP] : rn \in replicas}
+       IN
+         /\ currentTerm' = [currentTerm EXCEPT ![n] = newTerm]
          /\ tlog' = [tlog EXCEPT ![n] = newTlog]
          /\ localCheckPoint' = [localCheckPoint EXCEPT ![n][n] = MaxConfirmedSeq(newTlog)]
          /\ messages' = messages \cup replRequests \cup trimRequests
          /\ nextRequestId' = nextRequestId + numDocs + 1
     ELSE
-      \* check if another shard was promoted to primary
-      /\ IF  clusterStateOnNode[n].routingTable[n] = Replica /\
-             clusterStateOnMaster.routingTable[n] = Replica /\
-             clusterStateOnMaster.primaryTerm > currentTerm[n] THEN
-           /\ tlog' = [tlog EXCEPT ![n] = MarkPC(@, globalCheckPoint[n])]
-         ELSE
-           UNCHANGED <<tlog>>
-      /\ UNCHANGED <<messages, nextRequestId, localCheckPoint>>
+      /\ UNCHANGED <<messages, nextRequestId, currentTerm, localCheckPoint, tlog>>
   /\ UNCHANGED <<clusterStateOnMaster, clientVars,
                  globalCheckPoint>>
 
