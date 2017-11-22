@@ -21,9 +21,9 @@
 	</natures>
 	<linkedResources>
 		<link>
-			<name>elasticsearch.tla</name>
+			<name>replication.tla</name>
 			<type>1</type>
-			<locationURI>PARENT-1-PROJECT_LOC/elasticsearch.tla</locationURI>
+			<locationURI>PARENT-1-PROJECT_LOC/replication.tla</locationURI>
 		</link>
 	</linkedResources>
 </projectDescription>

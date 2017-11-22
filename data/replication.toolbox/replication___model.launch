@@ -57,6 +57,6 @@
 <intAttribute key="simuAril" value="-1"/>
 <intAttribute key="simuDepth" value="100"/>
 <intAttribute key="simuSeed" value="-1"/>
-<stringAttribute key="specName" value="elasticsearch"/>
+<stringAttribute key="specName" value="replication"/>
 <stringAttribute key="view" value=""/>
 </launchConfiguration>

@@ -70,7 +70,7 @@ starts from one, as this is the natural way to access the first element of a seq
 - ...
 
 
------------------------------- MODULE elasticsearch ---------------------------------
+------------------------------ MODULE replication ---------------------------------
 
 \* Imported modules used in this specification
 EXTENDS Naturals, FiniteSets, Sequences, TLC

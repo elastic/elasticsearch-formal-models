@@ -1,13 +1,17 @@
-# TLA+ Model of the Elasticsearch data replication approach
+# Formal models of core Elasticsearch algorithms
 
-The repository formalizes research done as to how data replication will work in future versions of [Elasticsearch](https://github.com/elastic/elasticsearch) and is directly related to [ongoing implementation efforts](https://github.com/elastic/elasticsearch/issues/10708). We consider this work-in-progress: Model as well as implementation are still evolving and might differ in substantial ways. The formal model mainly serves to illustrate some of the high-level concepts and helps to validate resiliency-related aspects of the approach.
+This repository contains formal models of core [Elasticsearch](https://github.com/elastic/elasticsearch) algorithms and is directly related to ongoing implementation efforts around [data replication](https://github.com/elastic/elasticsearch/issues/10708) and cluster consensus. We consider this work-in-progress: Models as well as implementations are still evolving and might differ in substantial ways. The formal models mainly serve to illustrate some of the high-level concepts and help to validate resiliency-related aspects.
 
-The model consists of two files:
+## Models
 
-- [TLA+ specification](elasticsearch.tla)
-- [TLC model checking configuration](elasticsearch.toolbox/elasticsearch___model.launch)
+### Data replication
 
-How to edit/run:
+The data replication model consists of two files:
+
+- [TLA+ specification](data/replication.tla)
+- [TLC model checking configuration](data/replication.toolbox/replication___model.launch)
+
+## How to edit/run TLA+:
 
 - Install the [TLA Toolbox](http://research.microsoft.com/en-us/um/people/lamport/tla/toolbox.html)
 - Read some [documentation](http://research.microsoft.com/en-us/um/people/lamport/tla/book.html)
