@@ -8,15 +8,15 @@ This repository contains formal models of core [Elasticsearch](https://github.co
 
 The data replication model consists of two files:
 
-- [TLA+ specification](data/replication.tla)
-- [TLC model checking configuration](data/replication.toolbox/replication___model.launch)
+- [TLA+ specification](data/tla/replication.tla)
+- [TLC model checking configuration](data/tla/replication.toolbox/replication___model.launch)
 
 ### Cluster consensus
 
 The cluster consensus model consists of two files:
 
-- [TLA+ specification](cluster/consensus.tla)
-- [TLC model checking configuration](cluster/consensus.toolbox/consensus___model.launch)
+- [TLA+ specification](cluster/tla/consensus.tla)
+- [TLC model checking configuration](cluster/tla/consensus.toolbox/consensus___model.launch)
 
 ## How to edit/run TLA+:
 

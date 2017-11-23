@@ -1,6 +1,7 @@
-**/*.toolbox/model
-**/*.toolbox/*aux
-**/*.toolbox/*.log
-**/*.toolbox/*.pdf
-**/*.toolbox/*.tex
-**/*.pdf
+.DS_Store
+**/tla/*.toolbox/model
+**/tla/*.toolbox/*aux
+**/tla/*.toolbox/*.log
+**/tla/*.toolbox/*.pdf
+**/tla/*.toolbox/*.tex
+**/tla/*.pdf
