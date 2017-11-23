@@ -11,6 +11,13 @@ The data replication model consists of two files:
 - [TLA+ specification](data/replication.tla)
 - [TLC model checking configuration](data/replication.toolbox/replication___model.launch)
 
+### Cluster consensus
+
+The cluster consensus model consists of two files:
+
+- [TLA+ specification](cluster/consensus.tla)
+- [TLC model checking configuration](cluster/consensus.toolbox/consensus___model.launch)
+
 ## How to edit/run TLA+:
 
 - Install the [TLA Toolbox](http://research.microsoft.com/en-us/um/people/lamport/tla/toolbox.html)
