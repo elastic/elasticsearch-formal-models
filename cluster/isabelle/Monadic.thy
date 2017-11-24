@@ -26,8 +26,10 @@ lemma runM_bind: "runM (a \<bind> f) rm nd0 = (case runM a rm nd0 of (nd1, msgs1
   unfolding runM_def Action_bind_def apply (cases "a", auto)
   by (metis (no_types, lifting) Action.case Action.exhaust case_prod_conv old.prod.exhaust)
 
-lemma return_bind[simp]: "do { a' <- return a; f a' } = f a" unfolding return_def Action_bind_def by (cases "f a", auto)
-lemma bind_return[simp]: "do { a' <- f; return a' } = f" unfolding return_def Action_bind_def by (cases "f", auto)
+lemma return_bind[simp]: "do { a' <- return a; f a' } = f a"
+  apply (intro runM_inject) by (simp add: runM_bind return_def)
+lemma bind_return[simp]: "do { a' <- f; return a' } = f"
+  apply (intro runM_inject) by (simp add: runM_bind return_def)
 
 lemma bind_bind_assoc[simp]:
   fixes f :: "'a Action"
@@ -55,20 +57,20 @@ lemma ask_thn[simp]: "do { askCurrentMessage; f } = f" by (auto simp add: runM_b
 definition getNodeData :: "NodeData Action" where "getNodeData \<equiv> Action (\<lambda>_ nd. (nd, [], nd))"
 definition setNodeData :: "NodeData \<Rightarrow> unit Action" where "setNodeData nd \<equiv> Action (\<lambda>_ _. (nd, [], ()))"
 
-lemma runM_getNodeData[simp]: "runM  getNodeData      rm nd = (nd,  [], nd)" by (simp add: runM_def getNodeData_def)
-lemma runM_setNodeData[simp]: "runM (setNodeData nd') rm nd = (nd', [], ())" by (simp add: runM_def setNodeData_def)
+lemma runM_getNodeData[simp]: "runM  getNodeData      rm nd = (nd,  [], nd)" by (simp add: getNodeData_def)
+lemma runM_setNodeData[simp]: "runM (setNodeData nd') rm nd = (nd', [], ())" by (simp add: setNodeData_def)
 
 lemma runM_getNodeData_continue[simp]: "runM (do { nd' <- getNodeData; f nd' }) rm nd = runM (f nd) rm nd" by (simp add: runM_bind)
 lemma runM_setNodeData_continue[simp]: "runM (do { setNodeData nd'; f }) rm nd = runM f rm nd'" by (simp add: runM_bind)
 
 definition modifyNodeData :: "(NodeData \<Rightarrow> NodeData) \<Rightarrow> unit Action" where "modifyNodeData f = getNodeData \<bind> (setNodeData \<circ> f)"
 
-lemma runM_modifyNodeData[simp]: "runM (modifyNodeData f) rm nd = (f nd, [], ())" by (simp add: modifyNodeData_def runM_bind)
+lemma runM_modifyNodeData[simp]: "runM (modifyNodeData f) rm nd = (f nd, [], ())" by (simp add: modifyNodeData_def)
 lemma runM_modifyNodeData_continue[simp]: "runM (do { modifyNodeData f; a }) rm nd = runM a rm (f nd)" by (simp add: runM_bind)
 
 definition tell :: "RoutedMessage list \<Rightarrow> unit Action" where "tell rms \<equiv> Action (\<lambda>_ nd. (nd, rms, ()))"
-lemma runM_tell[simp]: "runM (tell rms) rm nd = (nd, rms, ())" by (simp add: runM_def tell_def)
-lemma runM_tell_contiue[simp]: "runM (do { tell rms; a }) rm nd = (let (nd, rms', x) = runM a rm nd in (nd, rms@rms', x))" by (simp add: runM_bind tell_def)
+lemma runM_tell[simp]: "runM (tell rms) rm nd = (nd, rms, ())" by (simp add: tell_def)
+lemma runM_tell_contiue[simp]: "runM (do { tell rms; a }) rm nd = (let (nd, rms', x) = runM a rm nd in (nd, rms@rms', x))" by (simp add: runM_bind)
 
 definition send :: "RoutedMessage \<Rightarrow> unit Action" where "send rm = tell [rm]"
 
@@ -109,14 +111,14 @@ definition "when" :: "bool \<Rightarrow> unit Action \<Rightarrow> unit Action" 
 definition unless :: "bool \<Rightarrow> unit Action \<Rightarrow> unit Action" where "unless \<equiv> when \<circ> Not"
 
 lemma runM_when: "runM (when c a) rm nd = (if c then runM a rm nd else (nd, [], ()))"
-  by (auto simp add: when_def)
+  by (simp add: when_def)
 lemma runM_unless: "runM (unless c a) rm nd = (if c then (nd, [], ()) else runM a rm nd)"
-  by (auto simp add: unless_def when_def)
+  by (simp add: unless_def runM_when)
 
 lemma runM_when_continue: "runM (do { when c a; b }) rm nd = (if c then runM (do {a;b}) rm nd else runM b rm nd)"
-  by (auto simp add: when_def)
+  by (simp add: runM_bind runM_when)
 lemma runM_unless_continue: "runM (do { unless c a; b }) rm nd = (if c then runM b rm nd else runM (do {a;b}) rm nd)"
-  by (auto simp add: unless_def when_def)
+  by (simp add: runM_bind runM_unless)
 
 definition whenCorrectDestination :: "unit Action \<Rightarrow> unit Action"
   where "whenCorrectDestination go \<equiv> do {
