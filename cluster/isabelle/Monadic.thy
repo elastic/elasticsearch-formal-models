@@ -51,8 +51,11 @@ definition askCurrentMessage :: "RoutedMessage Action" where "askCurrentMessage 
 lemma runM_askCurrentMessage[simp]: "runM askCurrentMessage rm nd = (nd, [], rm)" by (simp add: runM_def askCurrentMessage_def)
 lemma runM_askCurrentMessage_continue[simp]: "runM (do { m <- askCurrentMessage; f m}) rm nd = runM (f rm) rm nd" by (simp add: runM_bind)
 
-lemma ask_ask_continue[simp]: "do { m1 <- askCurrentMessage; m2 <- askCurrentMessage; f m1 m2 } = do { m <- askCurrentMessage; f m m}" by (auto simp add: runM_bind)
-lemma ask_thn[simp]: "do { askCurrentMessage; f } = f" by (auto simp add: runM_bind)
+definition localMessage :: "(RoutedMessage \<Rightarrow> RoutedMessage) \<Rightarrow> 'a Action \<Rightarrow> 'a Action" where "localMessage f a \<equiv> Action (runM a \<circ> f)"
+lemma runM_localMessage[simp]: "runM (localMessage f a) rm nd = runM a (f rm) nd" by (simp add: localMessage_def)
+lemma runM_localMessage_continue[simp]:
+  "runM (do { x <- localMessage f a; b x }) rm nd = runM (do { x <- a; localMessage (\<lambda>_. rm) (b x) }) (f rm) nd"
+  by (simp add: runM_bind)
 
 definition getNodeData :: "NodeData Action" where "getNodeData \<equiv> Action (\<lambda>_ nd. (nd, [], nd))"
 definition setNodeData :: "NodeData \<Rightarrow> unit Action" where "setNodeData nd \<equiv> Action (\<lambda>_ _. (nd, [], ()))"
