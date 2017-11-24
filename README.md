@@ -13,14 +13,23 @@ The data replication model consists of two files:
 
 ### Cluster consensus
 
-The cluster consensus model consists of two files:
+The cluster consensus TLA+ model consists of two files:
 
 - [TLA+ specification](cluster/tla/consensus.tla)
 - [TLC model checking configuration](cluster/tla/consensus.toolbox/consensus___model.launch)
 
+The cluster consensus Isabelle model consists of the following theories:
+
+- [Basic definitions](cluster/isabelle/Preliminaries.thy)
+- [An implementation in functional style](cluster/isabelle/Implementation.thy)
+- [An implementation in monadic style, along with a proof it's equivalent to the previous](cluster/isabelle/Monadic.thy)
+- [The proof that each slot is consistent, based on Lamport's Synod algorithm](cluster/isabelle/OneSlot.thy)
+- [The proof that the implementation ensures consistency](cluster/isabelle/Zen.thy)
+
 ## How to edit/run TLA+:
 
 - Install the [TLA Toolbox](http://research.microsoft.com/en-us/um/people/lamport/tla/toolbox.html)
+  - If on Mac OS, [move the downloaded app to the Applications folder first](https://groups.google.com/forum/#!topic/tlaplus/bL04c6BiYxo)
 - Read some [documentation](http://research.microsoft.com/en-us/um/people/lamport/tla/book.html)
 
 How to run the model checker in headless mode:
