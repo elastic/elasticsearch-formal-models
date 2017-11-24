@@ -2,7 +2,7 @@
 
 This repository contains formal models of core [Elasticsearch](https://github.com/elastic/elasticsearch) algorithms and is directly related to ongoing implementation efforts around [data replication](https://github.com/elastic/elasticsearch/issues/10708) and cluster consensus. We consider this work-in-progress: Models as well as implementations are still evolving and might differ in substantial ways. The formal models mainly serve to illustrate some of the high-level concepts and help to validate resiliency-related aspects.
 
-## Models
+## Models
 
 ### Data replication
 
