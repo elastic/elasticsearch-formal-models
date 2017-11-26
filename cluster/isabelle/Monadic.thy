@@ -2,27 +2,27 @@ theory Monadic
   imports Implementation "~~/src/HOL/Library/Monad_Syntax"
 begin
 
-datatype 'a Action = Action "RoutedMessage \<Rightarrow> NodeData \<Rightarrow> (NodeData * RoutedMessage list * 'a)"
+datatype 'a Action = Action "NodeData \<Rightarrow> (NodeData * RoutedMessage list * 'a)"
 
-definition return :: "'a \<Rightarrow> 'a Action" where "return a \<equiv> Action (\<lambda> _ nd. (nd, [], a))"
+definition return :: "'a \<Rightarrow> 'a Action" where "return a \<equiv> Action (\<lambda> nd. (nd, [], a))"
 
 definition Action_bind :: "'a Action \<Rightarrow> ('a \<Rightarrow> 'b Action) \<Rightarrow> 'b Action"
   where "Action_bind ma mf \<equiv> case ma of
-    Action unwrapped_ma \<Rightarrow> Action (\<lambda> env nd0. case unwrapped_ma env nd0 of
+    Action unwrapped_ma \<Rightarrow> Action (\<lambda> nd0. case unwrapped_ma nd0 of
       (nd1, msgs0, a) \<Rightarrow> case mf a of
-        Action unwrapped_mb \<Rightarrow> case unwrapped_mb env nd1 of
+        Action unwrapped_mb \<Rightarrow> case unwrapped_mb nd1 of
           (nd2, msgs1, b) \<Rightarrow> (nd2, msgs0 @ msgs1, b))"
 
 adhoc_overloading bind Action_bind
 
-definition runM :: "'a Action \<Rightarrow> RoutedMessage \<Rightarrow> NodeData \<Rightarrow> (NodeData * RoutedMessage list * 'a)"
+definition runM :: "'a Action \<Rightarrow> NodeData \<Rightarrow> (NodeData * RoutedMessage list * 'a)"
   where "runM ma \<equiv> case ma of Action unwrapped_ma \<Rightarrow> unwrapped_ma"
 
 lemma runM_action[simp]: "runM (Action f) = f" by (simp add: runM_def)
-lemma runM_inject[intro]: "(\<And>rm nd. runM ma rm nd = runM mb rm nd) \<Longrightarrow> ma = mb" by (cases ma, cases mb, auto simp add: runM_def)
+lemma runM_inject[intro]: "(\<And>nd. runM ma nd = runM mb nd) \<Longrightarrow> ma = mb" by (cases ma, cases mb, auto simp add: runM_def)
 
-lemma runM_return[simp]: "runM (return a) rm nd = (nd, [], a)" unfolding runM_def return_def by simp
-lemma runM_bind: "runM (a \<bind> f) rm nd0 = (case runM a rm nd0 of (nd1, msgs1, b) \<Rightarrow> case runM (f b) rm nd1 of (nd2, msgs2, c) \<Rightarrow> (nd2, msgs1@msgs2, c))"
+lemma runM_return[simp]: "runM (return a) nd = (nd, [], a)" unfolding runM_def return_def by simp
+lemma runM_bind: "runM (a \<bind> f) nd0 = (case runM a nd0 of (nd1, msgs1, b) \<Rightarrow> case runM (f b) nd1 of (nd2, msgs2, c) \<Rightarrow> (nd2, msgs1@msgs2, c))"
   unfolding runM_def Action_bind_def apply (cases "a", auto)
   by (metis (no_types, lifting) Action.case Action.exhaust case_prod_conv old.prod.exhaust)
 
@@ -35,45 +35,35 @@ lemma bind_bind_assoc[simp]:
   fixes f :: "'a Action"
   shows "do { b <- do { a <- f; g a }; h b } = do { a <- f; b <- g a; h b }" (is "?LHS = ?RHS")
 proof (intro runM_inject)
-  fix nd0 rm
-  show "runM ?LHS rm nd0 = runM ?RHS rm nd0"
-  proof (cases "runM f rm nd0")
+  fix nd0
+  show "runM ?LHS nd0 = runM ?RHS nd0"
+  proof (cases "runM f nd0")
     case fields1: (fields nd1 msgs1 b)
     show ?thesis
-    proof (cases "runM (g b) rm nd1")
+    proof (cases "runM (g b) nd1")
       case fields2: (fields nd2 msgs2 c)
-      show ?thesis by (cases "runM (h c) rm nd2", simp add: runM_bind fields1 fields2)
+      show ?thesis by (cases "runM (h c) nd2", simp add: runM_bind fields1 fields2)
     qed
   qed
 qed
 
-definition askCurrentMessage :: "RoutedMessage Action" where "askCurrentMessage \<equiv> Action (\<lambda>rm nd. (nd, [], rm))"
-lemma runM_askCurrentMessage[simp]: "runM askCurrentMessage rm nd = (nd, [], rm)" by (simp add: runM_def askCurrentMessage_def)
-lemma runM_askCurrentMessage_continue[simp]: "runM (do { m <- askCurrentMessage; f m}) rm nd = runM (f rm) rm nd" by (simp add: runM_bind)
+definition getNodeData :: "NodeData Action" where "getNodeData \<equiv> Action (\<lambda>nd. (nd, [], nd))"
+definition setNodeData :: "NodeData \<Rightarrow> unit Action" where "setNodeData nd \<equiv> Action (\<lambda>_. (nd, [], ()))"
 
-definition localMessage :: "(RoutedMessage \<Rightarrow> RoutedMessage) \<Rightarrow> 'a Action \<Rightarrow> 'a Action" where "localMessage f a \<equiv> Action (runM a \<circ> f)"
-lemma runM_localMessage[simp]: "runM (localMessage f a) rm nd = runM a (f rm) nd" by (simp add: localMessage_def)
-lemma runM_localMessage_continue[simp]:
-  "runM (do { x <- localMessage f a; b x }) rm nd = runM (do { x <- a; localMessage (\<lambda>_. rm) (b x) }) (f rm) nd"
-  by (simp add: runM_bind)
+lemma runM_getNodeData[simp]: "runM  getNodeData      nd = (nd,  [], nd)" by (simp add: runM_def getNodeData_def)
+lemma runM_setNodeData[simp]: "runM (setNodeData nd') nd = (nd', [], ())" by (simp add: runM_def setNodeData_def)
 
-definition getNodeData :: "NodeData Action" where "getNodeData \<equiv> Action (\<lambda>_ nd. (nd, [], nd))"
-definition setNodeData :: "NodeData \<Rightarrow> unit Action" where "setNodeData nd \<equiv> Action (\<lambda>_ _. (nd, [], ()))"
-
-lemma runM_getNodeData[simp]: "runM  getNodeData      rm nd = (nd,  [], nd)" by (simp add: getNodeData_def)
-lemma runM_setNodeData[simp]: "runM (setNodeData nd') rm nd = (nd', [], ())" by (simp add: setNodeData_def)
-
-lemma runM_getNodeData_continue[simp]: "runM (do { nd' <- getNodeData; f nd' }) rm nd = runM (f nd) rm nd" by (simp add: runM_bind)
-lemma runM_setNodeData_continue[simp]: "runM (do { setNodeData nd'; f }) rm nd = runM f rm nd'" by (simp add: runM_bind)
+lemma runM_getNodeData_continue[simp]: "runM (do { nd' <- getNodeData; f nd' }) nd = runM (f nd) nd" by (simp add: runM_bind)
+lemma runM_setNodeData_continue[simp]: "runM (do { setNodeData nd'; f }) nd = runM f nd'" by (simp add: runM_bind)
 
 definition modifyNodeData :: "(NodeData \<Rightarrow> NodeData) \<Rightarrow> unit Action" where "modifyNodeData f = getNodeData \<bind> (setNodeData \<circ> f)"
 
-lemma runM_modifyNodeData[simp]: "runM (modifyNodeData f) rm nd = (f nd, [], ())" by (simp add: modifyNodeData_def)
-lemma runM_modifyNodeData_continue[simp]: "runM (do { modifyNodeData f; a }) rm nd = runM a rm (f nd)" by (simp add: runM_bind)
+lemma runM_modifyNodeData[simp]: "runM (modifyNodeData f) nd = (f nd, [], ())" by (simp add: modifyNodeData_def runM_bind)
+lemma runM_modifyNodeData_continue[simp]: "runM (do { modifyNodeData f; a }) nd = runM a (f nd)" by (simp add: runM_bind)
 
-definition tell :: "RoutedMessage list \<Rightarrow> unit Action" where "tell rms \<equiv> Action (\<lambda>_ nd. (nd, rms, ()))"
-lemma runM_tell[simp]: "runM (tell rms) rm nd = (nd, rms, ())" by (simp add: tell_def)
-lemma runM_tell_contiue[simp]: "runM (do { tell rms; a }) rm nd = (let (nd, rms', x) = runM a rm nd in (nd, rms@rms', x))" by (simp add: runM_bind)
+definition tell :: "RoutedMessage list \<Rightarrow> unit Action" where "tell rms \<equiv> Action (\<lambda>nd. (nd, rms, ()))"
+lemma runM_tell[simp]: "runM (tell rms) nd = (nd, rms, ())" by (simp add: runM_def tell_def)
+lemma runM_tell_contiue[simp]: "runM (do { tell rms; a }) nd = (let (nd, rms', x) = runM a nd in (nd, rms@rms', x))" by (simp add: runM_bind tell_def)
 
 definition send :: "RoutedMessage \<Rightarrow> unit Action" where "send rm = tell [rm]"
 
@@ -115,25 +105,24 @@ definition modifyCurrentClusterState where "modifyCurrentClusterState = modifies
 definition "when" :: "bool \<Rightarrow> unit Action \<Rightarrow> unit Action" where "when c a \<equiv> if c then a else return ()"
 definition unless :: "bool \<Rightarrow> unit Action \<Rightarrow> unit Action" where "unless \<equiv> when \<circ> Not"
 
-lemma runM_when: "runM (when c a) rm nd = (if c then runM a rm nd else (nd, [], ()))"
-  by (simp add: when_def)
-lemma runM_unless: "runM (unless c a) rm nd = (if c then (nd, [], ()) else runM a rm nd)"
-  by (simp add: unless_def runM_when)
+lemma runM_when: "runM (when c a) nd = (if c then runM a nd else (nd, [], ()))"
+  by (auto simp add: when_def)
+lemma runM_unless: "runM (unless c a) nd = (if c then (nd, [], ()) else runM a nd)"
+  by (auto simp add: unless_def when_def)
 
-lemma runM_when_continue: "runM (do { when c a; b }) rm nd = (if c then runM (do {a;b}) rm nd else runM b rm nd)"
-  by (simp add: runM_bind runM_when)
-lemma runM_unless_continue: "runM (do { unless c a; b }) rm nd = (if c then runM b rm nd else runM (do {a;b}) rm nd)"
-  by (simp add: runM_bind runM_unless)
+lemma runM_when_continue: "runM (do { when c a; b }) nd = (if c then runM (do {a;b}) nd else runM b nd)"
+  by (auto simp add: when_def)
+lemma runM_unless_continue: "runM (do { unless c a; b }) nd = (if c then runM b nd else runM (do {a;b}) nd)"
+  by (auto simp add: unless_def when_def)
 
-definition whenCorrectDestination :: "unit Action \<Rightarrow> unit Action"
-  where "whenCorrectDestination go \<equiv> do {
+definition whenCorrectDestination :: "Destination \<Rightarrow> unit Action \<Rightarrow> unit Action"
+  where "whenCorrectDestination d go \<equiv> do {
     n <- getCurrentNode;
-    m <- askCurrentMessage;
-    when (destination m \<in> { Broadcast, OneNode n }) go
+    when (d \<in> { Broadcast, OneNode n }) go
   }"
 
 lemma runM_whenCorrectDestination:
-  "runM (whenCorrectDestination go) rm nd = (if destination rm \<in> { Broadcast, OneNode (currentNode nd) } then runM go rm nd else (nd, [], ()))"
+  "runM (whenCorrectDestination d go) nd = (if d \<in> { Broadcast, OneNode (currentNode nd) } then runM go nd else (nd, [], ()))"
   by (simp add: whenCorrectDestination_def getCurrentNode_def gets_def runM_when)
 
 definition broadcast :: "Message \<Rightarrow> unit Action"
@@ -142,18 +131,17 @@ definition broadcast :: "Message \<Rightarrow> unit Action"
        send \<lparr> sender = n, destination = Broadcast, payload = msg \<rparr>
     }"
 
-lemma runM_broadcast[simp]: "runM (broadcast msg) rm nd = (nd, [\<lparr> sender = currentNode nd, destination = Broadcast, payload = msg \<rparr>], ())"
+lemma runM_broadcast[simp]: "runM (broadcast msg) nd = (nd, [\<lparr> sender = currentNode nd, destination = Broadcast, payload = msg \<rparr>], ())"
   by (simp add: broadcast_def getCurrentNode_def gets_def send_def)
 
-definition respond :: "Message \<Rightarrow> unit Action"
-  where "respond msg \<equiv> do {
+definition sendTo :: "Node \<Rightarrow> Message \<Rightarrow> unit Action"
+  where "sendTo d msg \<equiv> do {
        n <- getCurrentNode;
-       m <- askCurrentMessage;
-       send \<lparr> sender = n, destination = OneNode (sender m), payload = msg \<rparr>
+       send \<lparr> sender = n, destination = OneNode d, payload = msg \<rparr>
     }"
 
-lemma runM_respond[simp]: "runM (respond msg) rm nd = (nd, [\<lparr> sender = currentNode nd, destination = OneNode (sender rm), payload = msg \<rparr>], ())"
-  by (simp add: respond_def getCurrentNode_def gets_def send_def)
+lemma runM_sendTo[simp]: "runM (sendTo d msg) nd = (nd, [\<lparr> sender = currentNode nd, destination = OneNode d, payload = msg \<rparr>], ())"
+  by (simp add: sendTo_def getCurrentNode_def gets_def send_def)
 
 definition getLastAcceptedTermInSlot where "getLastAcceptedTermInSlot \<equiv> do {
     lastAcceptedSlot <- getLastAcceptedSlot;
@@ -163,9 +151,9 @@ definition getLastAcceptedTermInSlot where "getLastAcceptedTermInSlot \<equiv> d
       else return None
   }"
 
-definition doStartJoin :: "Term \<Rightarrow> unit Action"
+definition doStartJoin :: "Node \<Rightarrow> Term \<Rightarrow> unit Action"
   where
-    "doStartJoin newTerm \<equiv> do {
+    "doStartJoin newMaster newTerm \<equiv> do {
         currentTerm <- getCurrentTerm;
         unless (newTerm \<le> currentTerm) (do {
 
@@ -178,7 +166,7 @@ definition doStartJoin :: "Term \<Rightarrow> unit Action"
 
           firstUncommittedSlot <- getFirstUncommittedSlot;
           lastAcceptedTerm <- getLastAcceptedTermInSlot;
-          respond (JoinRequest firstUncommittedSlot newTerm lastAcceptedTerm)
+          sendTo newMaster (JoinRequest firstUncommittedSlot newTerm lastAcceptedTerm)
 
         })
       }"
@@ -257,9 +245,9 @@ definition doClientValue :: "Value \<Rightarrow> unit Action"
       })
     }"
 
-definition doPublishRequest :: "Slot \<Rightarrow> Term \<Rightarrow> Value \<Rightarrow> unit Action"
+definition doPublishRequest :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarrow> Value \<Rightarrow> unit Action"
   where
-    "doPublishRequest i t x \<equiv> do {
+    "doPublishRequest s i t x \<equiv> do {
 
       firstUncommittedSlot <- getFirstUncommittedSlot;
       when (i = firstUncommittedSlot) (do {
@@ -270,7 +258,7 @@ definition doPublishRequest :: "Slot \<Rightarrow> Term \<Rightarrow> Value \<Ri
           setLastAcceptedSlot i;
           setLastAcceptedTerm (Some t);
           setLastAcceptedValue x;
-          respond (PublishResponse i t)
+          sendTo s (PublishResponse i t)
         })
       })
     }"
@@ -327,15 +315,15 @@ definition doApplyCommit :: "Slot \<Rightarrow> Term \<Rightarrow> unit Action"
       })
     }"
 
-definition doCatchUpRequest :: "unit Action"
+definition doCatchUpRequest :: "Node \<Rightarrow> unit Action"
   where
-    "doCatchUpRequest \<equiv> do {
+    "doCatchUpRequest s \<equiv> do {
 
       firstUncommittedSlot <- getFirstUncommittedSlot;
       currentVotingNodes <- getCurrentVotingNodes;
       currentClusterState <- getCurrentClusterState;
 
-      respond (CatchUpResponse firstUncommittedSlot currentVotingNodes currentClusterState)
+      sendTo s (CatchUpResponse firstUncommittedSlot currentVotingNodes currentClusterState)
     }"
 
 definition doCatchUpResponse :: "Slot \<Rightarrow> Node set \<Rightarrow> ClusterState \<Rightarrow> unit Action"
@@ -373,21 +361,20 @@ definition doReboot :: "unit Action"
                   , publishPermitted = False
                   , publishVotes = {} \<rparr>)"
 
-definition ProcessMessageAction :: "unit Action"
-  where "ProcessMessageAction \<equiv> Action (\<lambda> rm nd. case ProcessMessage nd rm of (nd', messageOption) \<Rightarrow> (nd', case messageOption of None \<Rightarrow> [] | Some m \<Rightarrow> [m], ()))"
+definition ProcessMessageAction :: "RoutedMessage \<Rightarrow> unit Action"
+  where "ProcessMessageAction rm \<equiv> Action (\<lambda>nd. case ProcessMessage nd rm of (nd', messageOption) \<Rightarrow> (nd', case messageOption of None \<Rightarrow> [] | Some m \<Rightarrow> [m], ()))"
 
-definition dispatchMessage :: "unit Action"
-  where "dispatchMessage \<equiv> whenCorrectDestination (do { m <- askCurrentMessage; case payload m of
-          StartJoin t \<Rightarrow> doStartJoin t
+definition dispatchMessage :: "RoutedMessage \<Rightarrow> unit Action"
+  where "dispatchMessage m \<equiv> whenCorrectDestination (destination m) (case payload m of
+          StartJoin t \<Rightarrow> doStartJoin (sender m) t
           | JoinRequest i t a \<Rightarrow> doJoinRequest (sender m) i t a
           | ClientValue x \<Rightarrow> doClientValue x
-          | PublishRequest i t x \<Rightarrow> doPublishRequest i t x
+          | PublishRequest i t x \<Rightarrow> doPublishRequest (sender m) i t x
           | PublishResponse i t \<Rightarrow> doPublishResponse (sender m) i t
           | ApplyCommit i t \<Rightarrow> doApplyCommit i t
-          | CatchUpRequest \<Rightarrow> doCatchUpRequest
+          | CatchUpRequest \<Rightarrow> doCatchUpRequest (sender m)
           | CatchUpResponse i conf cs \<Rightarrow> doCatchUpResponse i conf cs
-          | Reboot \<Rightarrow> doReboot
-          })"
+          | Reboot \<Rightarrow> doReboot)"
 
 lemma getLastAcceptedTermInSlot_gets[simp]: "getLastAcceptedTermInSlot = gets lastAcceptedTermInSlot"
   by (intro runM_inject, simp add: gets_def getLastAcceptedTermInSlot_def getLastAcceptedSlot_def
@@ -395,9 +382,9 @@ lemma getLastAcceptedTermInSlot_gets[simp]: "getLastAcceptedTermInSlot = gets la
 
 lemma monadic_implementation_is_faithful:
   "dispatchMessage = ProcessMessageAction"
-proof (intro runM_inject)
+proof (intro ext runM_inject)
   fix rm nd
-  show "runM dispatchMessage rm nd = runM ProcessMessageAction rm nd" (is "?LHS = ?RHS")
+  show "runM (dispatchMessage rm) nd = runM (ProcessMessageAction rm) nd" (is "?LHS = ?RHS")
   proof (cases "destination rm \<in> {Broadcast, OneNode (currentNode nd)}")
     case False
     thus ?thesis
@@ -509,7 +496,7 @@ proof (intro runM_inject)
         by (simp add: ProcessMessageAction_def dispatchMessage_def runM_whenCorrectDestination
           doPublishRequest_def gets_def getCurrentTerm_def getFirstUncommittedSlot_def
           sets_def setLastAcceptedTerm_def setLastAcceptedSlot_def setLastAcceptedValue_def
-          respond_def getCurrentNode_def runM_unless send_def
+          getCurrentNode_def runM_unless send_def
           ProcessMessage_def handlePublishRequest_def runM_when)
 
     next
