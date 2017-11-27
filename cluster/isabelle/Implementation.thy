@@ -100,6 +100,11 @@ subsection \<open>Node implementation\<close>
 
 text \<open>Each node holds the following local data.\<close>
 
+record LastAcceptedData =
+  ladSlot :: Slot
+  ladTerm :: Term
+  ladValue :: Value
+
 record NodeData =
   currentNode :: Node (* identity of this node *)
   firstUncommittedSlot :: Slot (* all slots strictly below this one are committed *)
@@ -107,9 +112,7 @@ record NodeData =
   currentVotingNodes :: "Node set" (* configuration of the currentEra - the set of voting nodes *)
   currentClusterState :: ClusterState (* last-committed cluster state *)
   (* acceptor data *)
-  lastAcceptedSlot :: Slot (* the slot in which lastAcceptedValue was accepted *)
-  lastAcceptedTerm :: "Term option" (* term that was last accepted in lastAcceptedSlot, if any *)
-  lastAcceptedValue :: Value (* value accepted in lastAcceptedTerm, or NoOp *)
+  lastAcceptedData :: "LastAcceptedData option"
   (* election data *)
   joinVotes :: "Node set" (* set of nodes that have sent a JoinRequest for the current currentTerm *)
   electionWon :: bool
@@ -117,6 +120,15 @@ record NodeData =
   (* learner data *)
   publishPermitted :: bool (* if True, may publish a value for this slot/term pair; if False, must not: either there is definitely a PublishRequest in flight, or we've just rebooted. *)
   publishVotes :: "Node set"
+
+definition lastAcceptedSlot :: "NodeData \<Rightarrow> Slot"
+  where "lastAcceptedSlot nd \<equiv> ladSlot (THE lad. lastAcceptedData nd = Some lad)"
+
+definition lastAcceptedValue :: "NodeData \<Rightarrow> Value"
+  where "lastAcceptedValue nd \<equiv> ladValue (THE lad. lastAcceptedData nd = Some lad)"
+
+definition lastAcceptedTerm :: "NodeData \<Rightarrow> Term option"
+  where "lastAcceptedTerm nd \<equiv> case lastAcceptedData nd of None \<Rightarrow> None | Some lad \<Rightarrow> Some (ladTerm lad)"
 
 definition isQuorum :: "NodeData \<Rightarrow> Node set \<Rightarrow> bool"
   where "isQuorum nd q \<equiv> q \<in> majorities (currentVotingNodes nd)"
@@ -195,7 +207,7 @@ definition handleJoinRequest :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Ri
                         \<or> (maxTermOption a (lastAcceptedTermInSlot nd) = lastAcceptedTermInSlot nd
                               \<and> electionValueForced nd))))
           then let nd1 = addElectionVote s i a nd
-               in publishValue (lastAcceptedValue nd1) nd1
+               in (if electionValueForced nd1 then publishValue (lastAcceptedValue nd1) nd1 else (nd1, None))
           else (nd, None)"
 
 text \<open>A @{term PublishRequest} message is checked for acceptability and then handled as follows,
@@ -206,9 +218,7 @@ definition handlePublishRequest :: "Slot \<Rightarrow> Term \<Rightarrow> Value 
     "handlePublishRequest i t x nd \<equiv>
           if i = firstUncommittedSlot nd
                 \<and> t = currentTerm nd
-          then ( nd \<lparr> lastAcceptedSlot := i,
-                      lastAcceptedTerm := Some t,
-                      lastAcceptedValue := x \<rparr>
+          then ( nd \<lparr> lastAcceptedData := Some \<lparr> ladSlot = i, ladTerm = t, ladValue = x \<rparr> \<rparr>
                , Some (PublishResponse i t))
           else (nd, None)"
 
@@ -285,9 +295,7 @@ definition handleReboot :: "NodeData \<Rightarrow> NodeData"
       , currentTerm = currentTerm nd
       , currentVotingNodes = currentVotingNodes nd
       , currentClusterState = currentClusterState nd
-      , lastAcceptedSlot = lastAcceptedSlot nd
-      , lastAcceptedTerm = lastAcceptedTerm nd
-      , lastAcceptedValue = lastAcceptedValue nd
+      , lastAcceptedData = lastAcceptedData nd
       , joinVotes = {}
       , electionWon = False
       , electionValueForced = False
@@ -344,9 +352,7 @@ definition initialNodeState :: "Node \<Rightarrow> NodeData"
       , currentTerm = 0
       , currentVotingNodes = V\<^sub>0
       , currentClusterState = CS\<^sub>0
-      , lastAcceptedSlot = 0
-      , lastAcceptedTerm = None
-      , lastAcceptedValue = NoOp
+      , lastAcceptedData = None
       , joinVotes = {}
       , electionWon = False
       , electionValueForced = False
