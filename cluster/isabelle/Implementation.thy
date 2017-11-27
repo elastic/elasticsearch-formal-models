@@ -107,7 +107,8 @@ record NodeData =
   currentVotingNodes :: "Node set" (* configuration of the currentEra - the set of voting nodes *)
   currentClusterState :: ClusterState (* last-committed cluster state *)
   (* acceptor data *)
-  lastAcceptedTerm :: "Term option" (* term that was last accepted in this slot, if any *)
+  lastAcceptedSlot :: Slot (* the slot in which lastAcceptedValue was accepted *)
+  lastAcceptedTerm :: "Term option" (* term that was last accepted in lastAcceptedSlot, if any *)
   lastAcceptedValue :: Value (* value accepted in lastAcceptedTerm, or NoOp *)
   (* election data *)
   joinVotes :: "Node set" (* set of nodes that have sent a JoinRequest for the current currentTerm *)
@@ -119,6 +120,9 @@ record NodeData =
 
 definition isQuorum :: "NodeData \<Rightarrow> Node set \<Rightarrow> bool"
   where "isQuorum nd q \<equiv> q \<in> majorities (currentVotingNodes nd)"
+
+definition lastAcceptedTermInSlot :: "NodeData \<Rightarrow> Term option"
+  where "lastAcceptedTermInSlot nd \<equiv> if firstUncommittedSlot nd = lastAcceptedSlot nd then lastAcceptedTerm nd else None"
 
 text \<open>This method publishes a value via a @{term PublishRequest} message.\<close>
 
@@ -174,7 +178,7 @@ definition handleStartJoin :: "Term \<Rightarrow> NodeData \<Rightarrow> (NodeDa
           then ( ensureCurrentTerm t nd
                , Some (JoinRequest (firstUncommittedSlot nd)
                                      t
-                                    (lastAcceptedTerm nd)))
+                                    (lastAcceptedTermInSlot nd)))
           else (nd, None)"
 
 text \<open>A @{term JoinRequest} message is checked for acceptability and then handled as follows, perhaps
@@ -187,8 +191,8 @@ definition handleJoinRequest :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Ri
              \<and> (i < firstUncommittedSlot nd
                 \<or> (i = firstUncommittedSlot nd
                     \<and> (a = None
-                        \<or> a = lastAcceptedTerm nd
-                        \<or> (maxTermOption a (lastAcceptedTerm nd) = lastAcceptedTerm nd
+                        \<or> a = lastAcceptedTermInSlot nd
+                        \<or> (maxTermOption a (lastAcceptedTermInSlot nd) = lastAcceptedTermInSlot nd
                               \<and> electionValueForced nd))))
           then let nd1 = addElectionVote s i a nd
                in publishValue (lastAcceptedValue nd1) nd1
@@ -202,7 +206,8 @@ definition handlePublishRequest :: "Slot \<Rightarrow> Term \<Rightarrow> Value 
     "handlePublishRequest i t x nd \<equiv>
           if i = firstUncommittedSlot nd
                 \<and> t = currentTerm nd
-          then ( nd \<lparr> lastAcceptedTerm := Some t,
+          then ( nd \<lparr> lastAcceptedSlot := i,
+                      lastAcceptedTerm := Some t,
                       lastAcceptedValue := x \<rparr>
                , Some (PublishResponse i t))
           else (nd, None)"
@@ -242,11 +247,9 @@ and \texttt{ClusterState} via the @{term applyValue} method. It yields no messag
 definition handleApplyCommit :: "Slot \<Rightarrow> Term \<Rightarrow> NodeData \<Rightarrow> NodeData"
   where
     "handleApplyCommit i t nd \<equiv>
-        if i = firstUncommittedSlot nd \<and> lastAcceptedTerm nd = Some t
+        if i = firstUncommittedSlot nd \<and> lastAcceptedTermInSlot nd = Some t
           then (applyAcceptedValue nd)
                      \<lparr> firstUncommittedSlot := i + 1
-                     , lastAcceptedValue := NoOp
-                     , lastAcceptedTerm := None
                      , publishPermitted := True
                      , electionValueForced := False
                      , publishVotes := {} \<rparr>
@@ -262,8 +265,6 @@ definition handleCatchUpResponse :: "Slot \<Rightarrow> Node set \<Rightarrow> C
     "handleCatchUpResponse i conf cs nd \<equiv>
       if firstUncommittedSlot nd < i
         then nd \<lparr> firstUncommittedSlot := i
-                , lastAcceptedValue := NoOp
-                , lastAcceptedTerm := None
                 , publishPermitted := False
                 , electionValueForced := False
                 , publishVotes := {}
@@ -284,6 +285,7 @@ definition handleReboot :: "NodeData \<Rightarrow> NodeData"
       , currentTerm = currentTerm nd
       , currentVotingNodes = currentVotingNodes nd
       , currentClusterState = currentClusterState nd
+      , lastAcceptedSlot = lastAcceptedSlot nd
       , lastAcceptedTerm = lastAcceptedTerm nd
       , lastAcceptedValue = lastAcceptedValue nd
       , joinVotes = {}
@@ -342,6 +344,7 @@ definition initialNodeState :: "Node \<Rightarrow> NodeData"
       , currentTerm = 0
       , currentVotingNodes = V\<^sub>0
       , currentClusterState = CS\<^sub>0
+      , lastAcceptedSlot = 0
       , lastAcceptedTerm = None
       , lastAcceptedValue = NoOp
       , joinVotes = {}
