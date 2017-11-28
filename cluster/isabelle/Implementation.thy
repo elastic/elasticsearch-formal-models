@@ -226,7 +226,7 @@ text \<open>This method sends an @{term ApplyCommit} message if a quorum of vote
 
 definition commitIfQuorate :: "NodeData \<Rightarrow> (NodeData * Message option)"
   where
-    "commitIfQuorate nd = (nd, if 2 * card (publishVotes nd) > card (currentVotingNodes nd)
+    "commitIfQuorate nd = (nd, if isQuorum nd (publishVotes nd)
                                   then Some (ApplyCommit (firstUncommittedSlot nd) (currentTerm nd)) else None)"
 
 text \<open>A @{term PublishResponse} message is checked for acceptability and handled as follows. If
@@ -236,7 +236,7 @@ value is committed, yielding an @{term ApplyCommit} message.\<close>
 definition handlePublishResponse :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarrow> NodeData \<Rightarrow> (NodeData * Message option)"
   where
     "handlePublishResponse s i t nd \<equiv>
-        if i = firstUncommittedSlot nd \<and> t = currentTerm nd \<and> s \<in> currentVotingNodes nd
+        if i = firstUncommittedSlot nd \<and> t = currentTerm nd
         then commitIfQuorate (nd \<lparr> publishVotes := insert s (publishVotes nd) \<rparr>)
         else (nd, None)"
 

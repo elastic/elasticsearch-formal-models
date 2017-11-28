@@ -322,14 +322,10 @@ definition doPublishResponse :: "Node \<Rightarrow> SlotTerm \<Rightarrow> unit 
       firstUncommittedSlot <- getFirstUncommittedSlot;
       when (stSlot slotTerm \<noteq> firstUncommittedSlot) (throw IllegalArgumentException);
 
-      (* TBD discard votes from non-voting nodes? *)
-      currentVotingNodes <- getCurrentVotingNodes;
-      when (sourceNode \<notin> currentVotingNodes) (throw IllegalArgumentException);
-
       modifyPublishVotes (insert sourceNode);
       publishVotes <- getPublishVotes;
       currentVotingNodes <- getCurrentVotingNodes;
-      when (card publishVotes * 2 > card currentVotingNodes)
+      when (card (publishVotes \<inter> currentVotingNodes) * 2 > card currentVotingNodes)
         (broadcast (ApplyCommitFromSlotTerm slotTerm))
     }"
 
