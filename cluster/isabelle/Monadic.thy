@@ -335,6 +335,7 @@ definition doPublishResponse :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Ri
       firstUncommittedSlot <- getFirstUncommittedSlot;
       when (i \<noteq> firstUncommittedSlot) (throw IllegalArgumentException);
 
+      (* TBD discard votes from non-voting nodes? *)
       currentVotingNodes <- getCurrentVotingNodes;
       when (s \<notin> currentVotingNodes) (throw IllegalArgumentException);
 
