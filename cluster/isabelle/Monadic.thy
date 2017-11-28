@@ -315,11 +315,11 @@ definition doPublishRequest :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rig
   where
     "doPublishRequest s i t x \<equiv> do {
 
-      firstUncommittedSlot <- getFirstUncommittedSlot;
-      when (i \<noteq> firstUncommittedSlot) (throw IllegalArgumentException);
-
       currentTerm <- getCurrentTerm;
       when (t \<noteq> currentTerm) (throw IllegalArgumentException);
+
+      firstUncommittedSlot <- getFirstUncommittedSlot;
+      when (i \<noteq> firstUncommittedSlot) (throw IllegalArgumentException);
 
       setLastAcceptedData (Some \<lparr> ladSlot = i, ladTerm = t, ladValue = x \<rparr>);
       sendTo s (PublishResponse i t)
@@ -329,11 +329,11 @@ definition doPublishResponse :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Ri
   where
     "doPublishResponse s i t \<equiv> do {
 
-      firstUncommittedSlot <- getFirstUncommittedSlot;
-      when (i \<noteq> firstUncommittedSlot) (throw IllegalArgumentException);
-
       currentTerm <- getCurrentTerm;
       when (t \<noteq> currentTerm) (throw IllegalArgumentException);
+
+      firstUncommittedSlot <- getFirstUncommittedSlot;
+      when (i \<noteq> firstUncommittedSlot) (throw IllegalArgumentException);
 
       currentVotingNodes <- getCurrentVotingNodes;
       when (s \<notin> currentVotingNodes) (throw IllegalArgumentException);
@@ -349,13 +349,13 @@ definition doApplyCommit :: "Slot \<Rightarrow> Term \<Rightarrow> unit Action"
   where
     "doApplyCommit i t \<equiv> do {
 
-      firstUncommittedSlot <- getFirstUncommittedSlot;
-      when (i \<noteq> firstUncommittedSlot) (throw IllegalArgumentException);
-
       lastAcceptedTerm <- getLastAcceptedTermInSlot;
       when (Some t \<noteq> lastAcceptedTerm) (throw IllegalArgumentException);
 
-      lastAcceptedValue <- gets lastAcceptedValue;  (* NB must be not None since electionValueForced *)
+      firstUncommittedSlot <- getFirstUncommittedSlot;
+      when (i \<noteq> firstUncommittedSlot) (throw IllegalArgumentException);
+
+      lastAcceptedValue <- gets lastAcceptedValue;  (* NB must be not None since lastAcceptedTerm = Some t *)
       (case lastAcceptedValue of
         ClusterStateDiff diff
             \<Rightarrow> modifyCurrentClusterState diff
@@ -391,13 +391,15 @@ definition doCatchUpResponse :: "Slot \<Rightarrow> Node set \<Rightarrow> Clust
       when (i \<le> firstUncommittedSlot) (throw IllegalArgumentException);
 
       setFirstUncommittedSlot i;
-      setPublishPermitted False;
-      setElectionValueForced False;
-      setPublishVotes {};
       setCurrentVotingNodes conf;
       setCurrentClusterState cs;
+
+      setElectionValueForced False;
       setJoinVotes {};
-      setElectionWon False
+      setElectionWon False;
+
+      setPublishVotes {};
+      setPublishPermitted False
     }"
 
 definition doReboot :: "unit Action"
