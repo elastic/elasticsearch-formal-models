@@ -76,9 +76,7 @@ definition getElectionValueForced where "getElectionValueForced = gets electionV
 definition getElectionWon where "getElectionWon = gets electionWon"
 definition getFirstUncommittedSlot where "getFirstUncommittedSlot = gets firstUncommittedSlot"
 definition getJoinVotes where "getJoinVotes = gets joinVotes"
-definition getLastAcceptedSlot where "getLastAcceptedSlot = gets lastAcceptedSlot"
-definition getLastAcceptedTerm where "getLastAcceptedTerm = gets lastAcceptedTerm"
-definition getLastAcceptedValue where "getLastAcceptedValue = gets lastAcceptedValue"
+definition getLastAcceptedData where "getLastAcceptedData = gets lastAcceptedData"
 definition getPublishPermitted where "getPublishPermitted = gets publishPermitted"
 definition getPublishVotes where "getPublishVotes = gets publishVotes"
 
@@ -91,9 +89,7 @@ definition setElectionValueForced where "setElectionValueForced = sets electionV
 definition setElectionWon where "setElectionWon = sets electionWon_update"
 definition setFirstUncommittedSlot where "setFirstUncommittedSlot = sets firstUncommittedSlot_update"
 definition setJoinVotes where "setJoinVotes = sets joinVotes_update"
-definition setLastAcceptedSlot where "setLastAcceptedSlot = sets lastAcceptedSlot_update"
-definition setLastAcceptedTerm where "setLastAcceptedTerm = sets lastAcceptedTerm_update"
-definition setLastAcceptedValue where "setLastAcceptedValue = sets lastAcceptedValue_update"
+definition setLastAcceptedData where "setLastAcceptedData = sets lastAcceptedData_update"
 definition setPublishPermitted where "setPublishPermitted = sets publishPermitted_update"
 definition setPublishVotes where "setPublishVotes = sets publishVotes_update"
 
@@ -143,13 +139,18 @@ definition sendTo :: "Node \<Rightarrow> Message \<Rightarrow> unit Action"
 lemma runM_sendTo[simp]: "runM (sendTo d msg) nd = (nd, [\<lparr> sender = currentNode nd, destination = OneNode d, payload = msg \<rparr>], ())"
   by (simp add: sendTo_def getCurrentNode_def gets_def send_def)
 
-definition getLastAcceptedTermInSlot where "getLastAcceptedTermInSlot \<equiv> do {
-    lastAcceptedSlot <- getLastAcceptedSlot;
-    firstUncommittedSlot <- getFirstUncommittedSlot;
-    if lastAcceptedSlot = firstUncommittedSlot
-      then getLastAcceptedTerm
-      else return None
-  }"
+definition getLastAcceptedTermInSlot :: "Term option Action"
+  where
+    "getLastAcceptedTermInSlot \<equiv> do {
+      lastAcceptedData <- getLastAcceptedData;
+      case lastAcceptedData of
+          None \<Rightarrow> return None
+        | Some lad \<Rightarrow> do {
+      firstUncommittedSlot <- getFirstUncommittedSlot;
+      return (if ladSlot lad = firstUncommittedSlot
+        then Some (ladTerm lad)
+        else None)
+    }}"
 
 definition doStartJoin :: "Node \<Rightarrow> Term \<Rightarrow> unit Action"
   where
@@ -192,13 +193,14 @@ definition doJoinRequestCurrentSlot :: "Node \<Rightarrow> Term option \<Rightar
           setElectionWon electionWon';
           when electionWon' (do {
 
+            electionValueForced <- getElectionValueForced;
             publishPermitted <- getPublishPermitted;
-            when publishPermitted (do {
+            when (publishPermitted \<and> electionValueForced) (do {
               setPublishPermitted False;
 
               firstUncommittedSlot <- getFirstUncommittedSlot;
               currentTerm <- getCurrentTerm;
-              lastAcceptedValue <- getLastAcceptedValue;
+              lastAcceptedValue <- gets lastAcceptedValue; (* NB must be not None since electionValueForced *)
               broadcast (PublishRequest firstUncommittedSlot currentTerm lastAcceptedValue)
             })
           })
@@ -255,9 +257,7 @@ definition doPublishRequest :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rig
         currentTerm <- getCurrentTerm;
         when (t = currentTerm) (do {
 
-          setLastAcceptedSlot i;
-          setLastAcceptedTerm (Some t);
-          setLastAcceptedValue x;
+          setLastAcceptedData (Some \<lparr> ladSlot = i, ladTerm = t, ladValue = x \<rparr>);
           sendTo s (PublishResponse i t)
         })
       })
@@ -296,7 +296,7 @@ definition doApplyCommit :: "Slot \<Rightarrow> Term \<Rightarrow> unit Action"
         lastAcceptedTerm <- getLastAcceptedTermInSlot;
         when (Some t = lastAcceptedTerm) (do {
 
-          lastAcceptedValue <- getLastAcceptedValue;
+          lastAcceptedValue <- gets lastAcceptedValue;  (* NB must be not None since electionValueForced *)
           (case lastAcceptedValue of
             ClusterStateDiff diff
                 \<Rightarrow> modifyCurrentClusterState diff
@@ -352,9 +352,7 @@ definition doReboot :: "unit Action"
                   , currentTerm = currentTerm nd
                   , currentVotingNodes = currentVotingNodes nd
                   , currentClusterState = currentClusterState nd
-                  , lastAcceptedSlot = lastAcceptedSlot nd
-                  , lastAcceptedTerm = lastAcceptedTerm nd
-                  , lastAcceptedValue = lastAcceptedValue nd
+                  , lastAcceptedData = lastAcceptedData nd
                   , joinVotes = {}
                   , electionWon = False
                   , electionValueForced = False
@@ -377,8 +375,12 @@ definition dispatchMessage :: "RoutedMessage \<Rightarrow> unit Action"
           | Reboot \<Rightarrow> doReboot)"
 
 lemma getLastAcceptedTermInSlot_gets[simp]: "getLastAcceptedTermInSlot = gets lastAcceptedTermInSlot"
-  by (intro runM_inject, simp add: gets_def getLastAcceptedTermInSlot_def getLastAcceptedSlot_def
-      getFirstUncommittedSlot_def getLastAcceptedTerm_def lastAcceptedTermInSlot_def)
+proof (intro runM_inject)
+  fix nd
+  show "runM getLastAcceptedTermInSlot nd = runM (gets lastAcceptedTermInSlot) nd"
+    by (cases "lastAcceptedData nd", simp_all add: gets_def getLastAcceptedTermInSlot_def getLastAcceptedData_def
+      getFirstUncommittedSlot_def lastAcceptedTermInSlot_def lastAcceptedTerm_def lastAcceptedSlot_def)
+qed
 
 lemma monadic_implementation_is_faithful:
   "dispatchMessage = ProcessMessageAction"
@@ -414,18 +416,18 @@ proof (intro ext runM_inject)
         case a
         with StartJoin dest_ok show ?thesis
           by (simp add: ProcessMessageAction_def dispatchMessage_def runM_whenCorrectDestination ProcessMessage_def Let_def runM_unless
-              doStartJoin_def getCurrentTerm_def gets_def getLastAcceptedTerm_def setJoinVotes_def sets_def setCurrentTerm_def setElectionValueForced_def
+              doStartJoin_def getCurrentTerm_def gets_def setJoinVotes_def sets_def setCurrentTerm_def setElectionValueForced_def
               setPublishPermitted_def setPublishVotes_def getFirstUncommittedSlot_def handleStartJoin_def ensureCurrentTerm_def setElectionWon_def)
       next
         case b
         with StartJoin dest_ok show ?thesis
           by (cases "lastAcceptedTerm nd ", simp_all add: ProcessMessageAction_def dispatchMessage_def runM_whenCorrectDestination ProcessMessage_def Let_def
-              doStartJoin_def getCurrentTerm_def gets_def getLastAcceptedTerm_def setJoinVotes_def sets_def setCurrentTerm_def setElectionValueForced_def runM_unless
+              doStartJoin_def getCurrentTerm_def gets_def setJoinVotes_def sets_def setCurrentTerm_def setElectionValueForced_def runM_unless lastAcceptedTerm_def lastAcceptedSlot_def
               setPublishPermitted_def setPublishVotes_def getFirstUncommittedSlot_def handleStartJoin_def ensureCurrentTerm_def setElectionWon_def lastAcceptedTermInSlot_def)
       next
         case c with StartJoin dest_ok show ?thesis
           by (cases "lastAcceptedTerm nd", simp_all add: ProcessMessageAction_def dispatchMessage_def runM_whenCorrectDestination ProcessMessage_def Let_def
-              doStartJoin_def getCurrentTerm_def gets_def getLastAcceptedTerm_def setJoinVotes_def sets_def setCurrentTerm_def setElectionValueForced_def runM_unless
+              doStartJoin_def getCurrentTerm_def gets_def setJoinVotes_def sets_def setCurrentTerm_def setElectionValueForced_def runM_unless lastAcceptedTerm_def lastAcceptedSlot_def
               setPublishPermitted_def setPublishVotes_def getFirstUncommittedSlot_def handleStartJoin_def ensureCurrentTerm_def setElectionWon_def lastAcceptedTermInSlot_def)
       qed
 
@@ -459,11 +461,11 @@ proof (intro ext runM_inject)
             with JoinRequest dest_ok le t show ?thesis
               by (simp add: dispatchMessage_def runM_whenCorrectDestination Let_def runM_when_continue
                 doJoinRequest_def doJoinRequestCurrentSlot_def runM_when runM_unless
-                gets_def getFirstUncommittedSlot_def getCurrentTerm_def getLastAcceptedTerm_def
+                gets_def getFirstUncommittedSlot_def getCurrentTerm_def
                 getElectionValueForced_def getJoinVotes_def getCurrentVotingNodes_def
-                getPublishPermitted_def getLastAcceptedValue_def
+                getPublishPermitted_def
                 modifies_def modifyJoinVotes_def
-                sets_def setElectionWon_def setPublishPermitted_def
+                sets_def setElectionWon_def setPublishPermitted_def lastAcceptedValue_def
                 ProcessMessage_def ProcessMessageAction_def handleJoinRequest_def
                 addElectionVote_def publishValue_def isQuorum_def majorities_def)
           next
@@ -472,10 +474,10 @@ proof (intro ext runM_inject)
               by (simp add: dispatchMessage_def runM_whenCorrectDestination Let_def
                   doJoinRequest_def doJoinRequestCurrentSlot_def
                   runM_unless runM_when runM_when_continue
-                  gets_def getFirstUncommittedSlot_def getCurrentTerm_def getLastAcceptedTerm_def
+                  gets_def getFirstUncommittedSlot_def getCurrentTerm_def
                   getElectionValueForced_def getJoinVotes_def getCurrentVotingNodes_def
-                  getPublishPermitted_def getLastAcceptedValue_def
-                  modifies_def modifyJoinVotes_def
+                  getPublishPermitted_def
+                  modifies_def modifyJoinVotes_def lastAcceptedValue_def
                   sets_def setElectionWon_def setPublishPermitted_def setElectionValueForced_def
                   ProcessMessage_def ProcessMessageAction_def handleJoinRequest_def
                   addElectionVote_def publishValue_def isQuorum_def majorities_def)
@@ -495,7 +497,7 @@ proof (intro ext runM_inject)
       case (PublishRequest i t x) with dest_ok show ?thesis
         by (simp add: ProcessMessageAction_def dispatchMessage_def runM_whenCorrectDestination
           doPublishRequest_def gets_def getCurrentTerm_def getFirstUncommittedSlot_def
-          sets_def setLastAcceptedTerm_def setLastAcceptedSlot_def setLastAcceptedValue_def
+          sets_def setLastAcceptedData_def
           getCurrentNode_def runM_unless send_def
           ProcessMessage_def handlePublishRequest_def runM_when)
 
@@ -517,8 +519,8 @@ proof (intro ext runM_inject)
         with ApplyCommit dest_ok show ?thesis
           by (simp add: ProcessMessageAction_def dispatchMessage_def runM_whenCorrectDestination
             doApplyCommit_def runM_unless runM_when
-            gets_def getFirstUncommittedSlot_def getLastAcceptedTerm_def getLastAcceptedValue_def
-            sets_def setFirstUncommittedSlot_def setLastAcceptedValue_def setLastAcceptedTerm_def
+            gets_def getFirstUncommittedSlot_def
+            sets_def setFirstUncommittedSlot_def
             setPublishPermitted_def setElectionValueForced_def setPublishVotes_def
             ProcessMessage_def handleApplyCommit_def applyAcceptedValue_def)
       next
@@ -526,9 +528,9 @@ proof (intro ext runM_inject)
         with ApplyCommit dest_ok show ?thesis
           by (simp add: ProcessMessageAction_def dispatchMessage_def runM_whenCorrectDestination
             doApplyCommit_def runM_unless runM_when
-            gets_def getFirstUncommittedSlot_def getLastAcceptedTerm_def getLastAcceptedValue_def
+            gets_def getFirstUncommittedSlot_def
             getJoinVotes_def
-            sets_def setFirstUncommittedSlot_def setLastAcceptedValue_def setLastAcceptedTerm_def
+            sets_def setFirstUncommittedSlot_def
             setPublishPermitted_def setElectionValueForced_def setPublishVotes_def
             setCurrentVotingNodes_def setElectionWon_def
             ProcessMessage_def handleApplyCommit_def applyAcceptedValue_def majorities_def)
@@ -537,8 +539,8 @@ proof (intro ext runM_inject)
         with ApplyCommit dest_ok show ?thesis
           by (simp add: ProcessMessageAction_def dispatchMessage_def runM_whenCorrectDestination
             doApplyCommit_def runM_unless runM_when
-            gets_def getFirstUncommittedSlot_def getLastAcceptedTerm_def getLastAcceptedValue_def
-            sets_def setFirstUncommittedSlot_def setLastAcceptedValue_def setLastAcceptedTerm_def
+            gets_def getFirstUncommittedSlot_def
+            sets_def setFirstUncommittedSlot_def
             modifies_def modifyCurrentClusterState_def
             setPublishPermitted_def setElectionValueForced_def setPublishVotes_def
             ProcessMessage_def handleApplyCommit_def applyAcceptedValue_def)
@@ -557,7 +559,7 @@ proof (intro ext runM_inject)
       with dest_ok show ?thesis
         by (simp add: ProcessMessageAction_def dispatchMessage_def runM_whenCorrectDestination
             doCatchUpResponse_def gets_def getFirstUncommittedSlot_def
-            sets_def setFirstUncommittedSlot_def setLastAcceptedValue_def setLastAcceptedTerm_def
+            sets_def setFirstUncommittedSlot_def
             setPublishPermitted_def setElectionValueForced_def setPublishVotes_def
             setCurrentVotingNodes_def setCurrentClusterState_def setJoinVotes_def
             setElectionWon_def runM_unless
