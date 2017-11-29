@@ -3335,5 +3335,4 @@ proof -
   from sent1 sent2 assms show ?thesis using JoinRequest_unique_destination by fastforce
 qed
 
-
 end
