@@ -266,21 +266,17 @@ definition doVote :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarrow> T
       firstUncommittedSlot <- getFirstUncommittedSlot;
       when (voteFirstUncommittedSlot > firstUncommittedSlot) (throw IllegalArgumentException);
 
-      valueForced <- if (voteFirstUncommittedSlot = firstUncommittedSlot)
-        then (do {
-          let valueForced = voteLastAcceptedTerm \<noteq> None;
-          lastAcceptedTermInSlot <- getLastAcceptedTermInSlot;
-          when (voteLastAcceptedTerm >\<^sup>+ lastAcceptedTermInSlot)
-            (throw IllegalArgumentException);
-          electionValueForced <- getElectionValueForced;
-          when (valueForced \<and> voteLastAcceptedTerm <\<^sup>+ lastAcceptedTermInSlot \<and> \<not> electionValueForced)
-            (throw IllegalArgumentException);
-          return valueForced
-        }) else
-              return False;
+      when (voteFirstUncommittedSlot = firstUncommittedSlot \<and> voteLastAcceptedTerm \<noteq> None) (do {
+        lastAcceptedTermInSlot <- getLastAcceptedTermInSlot;
+        when (voteLastAcceptedTerm >\<^sup>+ lastAcceptedTermInSlot)
+          (throw IllegalArgumentException);
+        electionValueForced <- getElectionValueForced;
+        when (voteLastAcceptedTerm <\<^sup>+ lastAcceptedTermInSlot \<and> \<not> electionValueForced)
+          (throw IllegalArgumentException);
+        setElectionValueForced True
+      });
 
       modifyJoinVotes (insert sourceNode);
-      when valueForced (setElectionValueForced True);
 
       joinVotes <- getJoinVotes;
       currentVotingNodes <- getCurrentVotingNodes;
