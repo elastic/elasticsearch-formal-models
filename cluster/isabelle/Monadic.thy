@@ -252,7 +252,7 @@ definition doStartJoin :: "Node \<Rightarrow> Term \<Rightarrow> unit Action"
 
         firstUncommittedSlot <- getFirstUncommittedSlot;
         lastAcceptedTerm <- getLastAcceptedTermInSlot;
-        sendTo newMaster (JoinRequest firstUncommittedSlot newTerm lastAcceptedTerm)
+        sendTo newMaster (Vote firstUncommittedSlot newTerm lastAcceptedTerm)
 
       }"
 
@@ -431,7 +431,7 @@ definition ProcessMessageAction :: "RoutedMessage \<Rightarrow> unit Action"
 definition dispatchMessageInner :: "RoutedMessage \<Rightarrow> unit Action"
   where "dispatchMessageInner m \<equiv> case payload m of
           StartJoin t \<Rightarrow> doStartJoin (sender m) t
-          | JoinRequest i t a \<Rightarrow> doVote (sender m) i t a
+          | Vote i t a \<Rightarrow> doVote (sender m) i t a
           | ClientValue x \<Rightarrow> doClientValue x
           | PublishRequest i t x \<Rightarrow> doPublishRequest (sender m) \<lparr> ladSlot = i, ladTerm = t, ladValue = x \<rparr>
           | PublishResponse i t \<Rightarrow> doPublishResponse (sender m) \<lparr> stSlot = i, stTerm = t \<rparr>
@@ -520,28 +520,28 @@ proof (intro ext runM_inject)
       finally show ?thesis by simp
 
     next
-      case (JoinRequest i t a)
+      case (Vote i t a)
 
       have "?LHS = runM (ignoringExceptions (doVote (sender rm) i t a)) nd" (is "_ = ?STEP")
-        by (simp add: dispatchMessageInner_def JoinRequest)
+        by (simp add: dispatchMessageInner_def Vote)
 
       also have "... = ?RHS"
       proof (cases "firstUncommittedSlot nd < i")
         case True
-        with JoinRequest dest_ok show ?thesis
+        with Vote dest_ok show ?thesis
           by (simp add: dispatchMessage_def runM_unless
               doVote_def gets_def getFirstUncommittedSlot_def ProcessMessage_def
-              ProcessMessageAction_def handleJoinRequest_def ignoringExceptions_def getCurrentTerm_def)
+              ProcessMessageAction_def handleVote_def ignoringExceptions_def getCurrentTerm_def)
       next
         case False hence le: "i \<le> firstUncommittedSlot nd" by simp
 
         show ?thesis
         proof (cases "t = currentTerm nd")
           case False
-          with JoinRequest dest_ok le show ?thesis
+          with Vote dest_ok le show ?thesis
             by (simp add: dispatchMessage_def runM_when runM_unless
                 doVote_def gets_def getFirstUncommittedSlot_def getCurrentTerm_def
-                ProcessMessage_def ProcessMessageAction_def handleJoinRequest_def ignoringExceptions_def)
+                ProcessMessage_def ProcessMessageAction_def handleVote_def ignoringExceptions_def)
 
         next
           case t: True
@@ -549,7 +549,7 @@ proof (intro ext runM_inject)
           show ?thesis
           proof (cases "i = firstUncommittedSlot nd")
             case False
-            with JoinRequest dest_ok le t show ?thesis
+            with Vote dest_ok le t show ?thesis
               by (simp add: dispatchMessage_def Let_def runM_when_continue
                   doVote_def runM_when runM_unless
                   gets_def getFirstUncommittedSlot_def getCurrentTerm_def
@@ -557,7 +557,7 @@ proof (intro ext runM_inject)
                   getPublishPermitted_def ignoringExceptions_def broadcast_def getCurrentNode_def
                   modifies_def modifyJoinVotes_def send_def
                   sets_def setElectionWon_def setPublishPermitted_def lastAcceptedValue_def
-                  ProcessMessage_def ProcessMessageAction_def handleJoinRequest_def
+                  ProcessMessage_def ProcessMessageAction_def handleVote_def
                   addElectionVote_def publishValue_def isQuorum_def majorities_def)
           next
             case i: True
@@ -579,7 +579,7 @@ proof (intro ext runM_inject)
                       not_quorum_card)
 
                 also from dest_ok have "... = ?RHS"
-                  by (simp add: ProcessMessageAction_def ProcessMessage_def JoinRequest handleJoinRequest_def
+                  by (simp add: ProcessMessageAction_def ProcessMessage_def Vote handleVote_def
                       i t a addElectionVote_def not_quorum publishValue_def Let_def)
 
                 finally show ?thesis .
@@ -601,7 +601,7 @@ proof (intro ext runM_inject)
                         quorum_card getPublishPermitted_def)
 
                   also from False dest_ok have "... = ?RHS"
-                    by (simp add: ProcessMessageAction_def ProcessMessage_def JoinRequest handleJoinRequest_def
+                    by (simp add: ProcessMessageAction_def ProcessMessage_def Vote handleVote_def
                         i t a addElectionVote_def quorum publishValue_def Let_def)
 
                   finally show ?thesis .
@@ -621,7 +621,7 @@ proof (intro ext runM_inject)
                         quorum_card getPublishPermitted_def setPublishPermitted_def lastAcceptedValue_def)
 
                   also from True dest_ok have "... = ?RHS"
-                    by (simp add: ProcessMessageAction_def ProcessMessage_def JoinRequest handleJoinRequest_def
+                    by (simp add: ProcessMessageAction_def ProcessMessage_def Vote handleVote_def
                         i t a addElectionVote_def quorum publishValue_def Let_def lastAcceptedValue_def)
 
                   finally show ?thesis .
@@ -641,7 +641,7 @@ proof (intro ext runM_inject)
                       gets_def getCurrentTerm_def runM_when_continue getFirstUncommittedSlot_def)
 
                 also from dest_ok have "... = ?RHS"
-                  by (simp add: ProcessMessageAction_def ProcessMessage_def JoinRequest handleJoinRequest_def
+                  by (simp add: ProcessMessageAction_def ProcessMessage_def Vote handleVote_def
                       i t a lat)
 
                 finally show ?thesis .
@@ -664,7 +664,7 @@ proof (intro ext runM_inject)
                         gets_def getCurrentTerm_def runM_when_continue getFirstUncommittedSlot_def)
 
                   also from voteTooNew dest_ok have "... = ?RHS"
-                    by (simp add: ProcessMessageAction_def ProcessMessage_def JoinRequest handleJoinRequest_def
+                    by (simp add: ProcessMessageAction_def ProcessMessage_def Vote handleVote_def
                         i t a lat max_def)
 
                   finally show ?thesis .
@@ -678,7 +678,7 @@ proof (intro ext runM_inject)
                         getElectionValueForced_def)
 
                   also from voteOlderButNotForced dest_ok have "... = ?RHS"
-                    by (simp add: ProcessMessageAction_def ProcessMessage_def JoinRequest handleJoinRequest_def
+                    by (simp add: ProcessMessageAction_def ProcessMessage_def Vote handleVote_def
                         i t a lat max_def)
 
                   finally show ?thesis .
@@ -702,7 +702,7 @@ proof (intro ext runM_inject)
                           not_quorum_card setElectionValueForced_def)
 
                     also from dest_ok voteMatchesNode have "... = ?RHS"
-                      by (simp add: ProcessMessageAction_def ProcessMessage_def JoinRequest handleJoinRequest_def
+                      by (simp add: ProcessMessageAction_def ProcessMessage_def Vote handleVote_def
                           i t a lat max_def addElectionVote_def not_quorum publishValue_def Let_def)
 
                     finally show ?thesis .
@@ -726,7 +726,7 @@ proof (intro ext runM_inject)
                             quorum_card getPublishPermitted_def setElectionValueForced_def setPublishPermitted_def)
 
                       also from False dest_ok have "... = ?RHS"
-                        by (simp add: ProcessMessageAction_def ProcessMessage_def JoinRequest handleJoinRequest_def
+                        by (simp add: ProcessMessageAction_def ProcessMessage_def Vote handleVote_def
                             i t a lat voteMatchesNode addElectionVote_def quorum publishValue_def Let_def)
 
                       finally show ?thesis .
@@ -747,7 +747,7 @@ proof (intro ext runM_inject)
                             setElectionValueForced_def)
 
                       also from True dest_ok have "... = ?RHS"
-                        by (simp add: ProcessMessageAction_def ProcessMessage_def JoinRequest handleJoinRequest_def
+                        by (simp add: ProcessMessageAction_def ProcessMessage_def Vote handleVote_def
                             i t a lat voteMatchesNode addElectionVote_def quorum publishValue_def Let_def lastAcceptedValue_def)
 
                       finally show ?thesis .
@@ -774,7 +774,7 @@ proof (intro ext runM_inject)
                           not_quorum_card setElectionValueForced_def)
 
                     also from dest_ok voteOlderAndForced have "... = ?RHS"
-                      by (simp add: ProcessMessageAction_def ProcessMessage_def JoinRequest handleJoinRequest_def
+                      by (simp add: ProcessMessageAction_def ProcessMessage_def Vote handleVote_def
                           i t a lat max_def addElectionVote_def not_quorum publishValue_def Let_def)
 
                     finally show ?thesis .
@@ -798,7 +798,7 @@ proof (intro ext runM_inject)
                             quorum_card getPublishPermitted_def setElectionValueForced_def setPublishPermitted_def)
 
                       also from False dest_ok voteOlderAndForced have "... = ?RHS"
-                        by (simp add: ProcessMessageAction_def ProcessMessage_def JoinRequest handleJoinRequest_def
+                        by (simp add: ProcessMessageAction_def ProcessMessage_def Vote handleVote_def
                           i t a lat addElectionVote_def quorum publishValue_def Let_def)
 
                       finally show ?thesis .
@@ -820,7 +820,7 @@ proof (intro ext runM_inject)
                             setElectionValueForced_def)
 
                       also from True voteOlderAndForced dest_ok have "... = ?RHS"
-                        by (simp add: ProcessMessageAction_def ProcessMessage_def JoinRequest handleJoinRequest_def
+                        by (simp add: ProcessMessageAction_def ProcessMessage_def Vote handleVote_def
                             i t a lat addElectionVote_def quorum publishValue_def Let_def lastAcceptedValue_def)
 
                       finally show ?thesis .

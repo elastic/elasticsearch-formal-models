@@ -19,7 +19,7 @@ message refers to a slot number.\<close>
 
 datatype Message
   = StartJoin Term
-  | JoinRequest Slot Term "Term option"
+  | Vote Slot Term "Term option"
   | ClientValue Value
   | PublishRequest Slot Term Value
   | PublishResponse Slot Term
@@ -34,7 +34,7 @@ intuitive understanding of their purposes.\<close>
 text \<open>The message @{term "StartJoin t"} may be sent by any node to attempt to start a master
 election in the given term @{term t}.\<close>
 
-text \<open>The message @{term "JoinRequest i t a"} may be sent by a node in response
+text \<open>The message @{term "Vote i t a"} may be sent by a node in response
 to a @{term StartJoin} message. It indicates that the sender knows all committed values for slots
 strictly below @{term i}, and that the sender will no longer vote (i.e. send an @{term
 PublishResponse}) in any term prior to @{term t}. The field @{term a} is either @{term
@@ -42,7 +42,7 @@ None} or @{term "Some t'"}. In the former case this indicates that
 the node has not yet sent any @{term PublishResponse} message in slot @{term i}, and in the latter
 case it indicates that the largest term in which it has previously sent an @{term PublishResponse}
 message is @{term t'}.  All
-nodes must avoid sending a @{term JoinRequest} message to two different masters in the same term.\<close>
+nodes must avoid sending a @{term Vote} message to two different masters in the same term.\<close>
 
 text \<open>The message @{term "ClientValue x"} may be sent by any node and indicates an attempt to
 reach consensus on the value @{term x}.\<close>
@@ -114,7 +114,7 @@ record NodeData =
   (* acceptor data *)
   lastAcceptedData :: "LastAcceptedData option"
   (* election data *)
-  joinVotes :: "Node set" (* set of nodes that have sent a JoinRequest for the current currentTerm *)
+  joinVotes :: "Node set" (* set of nodes that have sent a Vote for the current currentTerm *)
   electionWon :: bool
   electionValueForced :: bool (* if True, must propose lastAcceptedValue for this slot on winning an election; if False, can propose anything *)
   (* learner data *)
@@ -164,7 +164,7 @@ definition ensureCurrentTerm :: "Term \<Rightarrow> NodeData \<Rightarrow> NodeD
               , publishPermitted := True
               , publishVotes := {} \<rparr>"
 
-text \<open>This method updates the node's state on receipt of a vote (a @{term JoinRequest}) in an election.\<close>
+text \<open>This method updates the node's state on receipt of a vote (a @{term Vote}) in an election.\<close>
 
 definition addElectionVote :: "Node \<Rightarrow> Slot => Term option \<Rightarrow> NodeData \<Rightarrow> NodeData"
   where
@@ -181,24 +181,24 @@ definition handleClientValue :: "Value \<Rightarrow> NodeData \<Rightarrow> (Nod
     "handleClientValue x nd \<equiv> if electionValueForced nd then (nd, None) else publishValue x nd"
 
 text \<open>A @{term StartJoin} message is checked for acceptability and then handled by updating the
-node's term and yielding a @{term JoinRequest} message as follows.\<close>
+node's term and yielding a @{term Vote} message as follows.\<close>
 
 definition handleStartJoin :: "Term \<Rightarrow> NodeData \<Rightarrow> (NodeData * Message option)"
   where
     "handleStartJoin t nd \<equiv>
         if currentTerm nd < t
           then ( ensureCurrentTerm t nd
-               , Some (JoinRequest (firstUncommittedSlot nd)
+               , Some (Vote (firstUncommittedSlot nd)
                                      t
                                     (lastAcceptedTermInSlot nd)))
           else (nd, None)"
 
-text \<open>A @{term JoinRequest} message is checked for acceptability and then handled as follows, perhaps
+text \<open>A @{term Vote} message is checked for acceptability and then handled as follows, perhaps
 yielding a @{term PublishRequest} message.\<close>
 
-definition handleJoinRequest :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarrow> Term option \<Rightarrow> NodeData \<Rightarrow> (NodeData * Message option)"
+definition handleVote :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarrow> Term option \<Rightarrow> NodeData \<Rightarrow> (NodeData * Message option)"
   where
-    "handleJoinRequest s i t a nd \<equiv>
+    "handleVote s i t a nd \<equiv>
          if t = currentTerm nd
              \<and> (i < firstUncommittedSlot nd
                 \<or> (i = firstUncommittedSlot nd
@@ -303,7 +303,7 @@ definition handleReboot :: "NodeData \<Rightarrow> NodeData"
       , publishVotes = {} \<rparr>"
 
 text \<open>This function dispatches incoming messages to the appropriate handler method, and
-routes any responses to the appropriate places. In particular, @{term JoinRequest} messages
+routes any responses to the appropriate places. In particular, @{term Vote} messages
 (sent by the @{term handleStartJoin} method) and
 @{term PublishResponse} messages (sent by the @{term handlePublishRequest} method) are
 only sent to a single node, whereas all other responses are broadcast to all nodes.\<close>
@@ -324,8 +324,8 @@ definition ProcessMessage :: "NodeData \<Rightarrow> RoutedMessage \<Rightarrow>
         then case payload msg of
           StartJoin t
               \<Rightarrow> respondToSender (handleStartJoin t nd)
-          | JoinRequest i t a
-              \<Rightarrow> respondToAll (handleJoinRequest (sender msg) i t a nd)
+          | Vote i t a
+              \<Rightarrow> respondToAll (handleVote (sender msg) i t a nd)
           | ClientValue x
               \<Rightarrow> respondToAll (handleClientValue x nd)
           | PublishRequest i t x
