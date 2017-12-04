@@ -208,32 +208,19 @@ lemma runM_sendTo[simp]: "runM (sendTo d msg) nd = (nd, [\<lparr> sender = curre
 
 definition ignoringExceptions :: "unit Action \<Rightarrow> unit Action" where "ignoringExceptions go \<equiv> catch go (\<lambda>_. return ())"
 
-definition lt_term_option :: "Term option \<Rightarrow> Term option \<Rightarrow> bool" (infix "<\<^sup>+" 50)
-  where "t\<^sub>1 <\<^sup>+ t\<^sub>2 \<equiv> t\<^sub>1 \<noteq> t\<^sub>2 \<and> maxTermOption t\<^sub>1 t\<^sub>2 = t\<^sub>2"
+lemma None_lt[simp]: "NO_TERM < t = (t \<noteq> NO_TERM)" by (cases t, simp_all)
 
-definition gt_term_option :: "Term option \<Rightarrow> Term option \<Rightarrow> bool" (infix ">\<^sup>+" 50)
-  where "t\<^sub>1 >\<^sup>+ t\<^sub>2 \<equiv> t\<^sub>2 <\<^sup>+ t\<^sub>1"
-
-lemma lt_None[simp]: "t <\<^sup>+ None = False" by (cases t, simp_all add: lt_term_option_def)
-lemma None_lt[simp]: "None <\<^sup>+ t = (t \<noteq> None)" by (cases t, simp_all add: lt_term_option_def)
-lemma Some_lt_Some[simp]: "(Some t\<^sub>1 <\<^sup>+ Some t\<^sub>2) = (t\<^sub>1 < t\<^sub>2)" by (auto simp add: lt_term_option_def max_def)
-
-lemma None_gt[simp]: "None >\<^sup>+ t = False"
-  and gt_None[simp]: "t >\<^sup>+ None = (t \<noteq> None)"
-  and Some_gt_Some[simp]: "(Some t\<^sub>1 >\<^sup>+ Some t\<^sub>2) = (t\<^sub>1 > t\<^sub>2)"
-  by (simp_all add: gt_term_option_def)
-
-definition getLastAcceptedTermInSlot :: "Term option Action"
+definition getLastAcceptedTermInSlot :: "TermOption Action"
   where
     "getLastAcceptedTermInSlot \<equiv> do {
       lastAcceptedData <- getLastAcceptedData;
       case lastAcceptedData of
-          None \<Rightarrow> return None
+          None \<Rightarrow> return NO_TERM
         | Some lad \<Rightarrow> do {
       firstUncommittedSlot <- getFirstUncommittedSlot;
       return (if ladSlot lad = firstUncommittedSlot
-        then Some (ladTerm lad)
-        else None)
+        then SomeTerm (ladTerm lad)
+        else NO_TERM)
     }}"
 
 definition doStartJoin :: "Node \<Rightarrow> Term \<Rightarrow> unit Action"
@@ -256,7 +243,7 @@ definition doStartJoin :: "Node \<Rightarrow> Term \<Rightarrow> unit Action"
 
       }"
 
-definition doVote :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarrow> Term option \<Rightarrow> unit Action"
+definition doVote :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarrow> TermOption \<Rightarrow> unit Action"
   where
     "doVote sourceNode voteFirstUncommittedSlot voteTerm voteLastAcceptedTerm \<equiv> do {
 
@@ -266,12 +253,12 @@ definition doVote :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarrow> T
       firstUncommittedSlot <- getFirstUncommittedSlot;
       when (voteFirstUncommittedSlot > firstUncommittedSlot) (throw IllegalArgumentException);
 
-      when (voteFirstUncommittedSlot = firstUncommittedSlot \<and> voteLastAcceptedTerm \<noteq> None) (do {
+      when (voteFirstUncommittedSlot = firstUncommittedSlot \<and> voteLastAcceptedTerm \<noteq> NO_TERM) (do {
         lastAcceptedTermInSlot <- getLastAcceptedTermInSlot;
-        when (voteLastAcceptedTerm >\<^sup>+ lastAcceptedTermInSlot)
+        when (voteLastAcceptedTerm > lastAcceptedTermInSlot)
           (throw IllegalArgumentException);
         electionValueForced <- getElectionValueForced;
-        when (voteLastAcceptedTerm <\<^sup>+ lastAcceptedTermInSlot \<and> \<not> electionValueForced)
+        when (voteLastAcceptedTerm < lastAcceptedTermInSlot \<and> \<not> electionValueForced)
           (throw IllegalArgumentException);
         setElectionValueForced True
       });
@@ -338,7 +325,7 @@ definition doCommit :: "SlotTerm \<Rightarrow> unit Action"
     "doCommit slotTerm \<equiv> do {
 
       lastAcceptedTermInSlot <- getLastAcceptedTermInSlot;
-      when (Some (stTerm slotTerm) \<noteq> lastAcceptedTermInSlot) (throw IllegalArgumentException);
+      when (SomeTerm (stTerm slotTerm) \<noteq> lastAcceptedTermInSlot) (throw IllegalArgumentException);
 
       firstUncommittedSlot <- getFirstUncommittedSlot;
       when (stSlot slotTerm \<noteq> firstUncommittedSlot) (throw IllegalArgumentException);
@@ -484,14 +471,14 @@ proof (intro ext runM_inject)
 
       also consider
         (a) "t \<le> currentTerm nd"
-        | (b) "currentTerm nd < t" "case lastAcceptedTerm nd of None \<Rightarrow> False | Some x \<Rightarrow> t \<le> x"
-        | (c) "currentTerm nd < t" "case lastAcceptedTerm nd of None \<Rightarrow> True | Some x \<Rightarrow> x < t"
+        | (b) "currentTerm nd < t" "case lastAcceptedTerm nd of NO_TERM \<Rightarrow> False | SomeTerm x \<Rightarrow> t \<le> x"
+        | (c) "currentTerm nd < t" "case lastAcceptedTerm nd of NO_TERM \<Rightarrow> True | SomeTerm x \<Rightarrow> x < t"
       proof (cases "t \<le> currentTerm nd")
         case True thus ?thesis by (intro a)
       next
         case 1: False
         with b c show ?thesis
-          by (cases "case lastAcceptedTerm nd of None \<Rightarrow> False | Some x \<Rightarrow> t \<le> x", auto, cases "lastAcceptedTerm nd", auto)
+          by (cases "case lastAcceptedTerm nd of NO_TERM \<Rightarrow> False | SomeTerm x \<Rightarrow> t \<le> x", auto, cases "lastAcceptedTerm nd", auto)
       qed
 
       hence "?STEP = ?RHS"
@@ -563,7 +550,7 @@ proof (intro ext runM_inject)
             case i: True
             show ?thesis
             proof (cases a)
-              case a: None
+              case a: NO_TERM
 
               show ?thesis
               proof (cases "isQuorum nd (insert (sender rm) (joinVotes nd))")
@@ -630,11 +617,11 @@ proof (intro ext runM_inject)
               qed
 
             next
-              case a: (Some voteLastAcceptedTerm)
+              case a: (SomeTerm voteLastAcceptedTerm)
 
               show ?thesis
               proof (cases "lastAcceptedTermInSlot nd")
-                case lat: None
+                case lat: NO_TERM
 
                 have "?STEP = (nd, [], Success ())"
                   by (auto simp add: ignoringExceptions_def i t a lat doVote_def catch_def
@@ -647,7 +634,7 @@ proof (intro ext runM_inject)
                 finally show ?thesis .
 
               next
-                case lat: (Some nodeLastAcceptedTerm)
+                case lat: (SomeTerm nodeLastAcceptedTerm)
 
                 consider (voteTooNew) "voteLastAcceptedTerm > nodeLastAcceptedTerm"
                   | (voteOlderButNotForced) "voteLastAcceptedTerm < nodeLastAcceptedTerm" "\<not> electionValueForced nd"

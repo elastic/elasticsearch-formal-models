@@ -16,10 +16,42 @@ to consider them as ``fire-and-forget'' RPC invocations that, on receipt, call s
 update the receiving node's state, and maybe yield some further messages. The @{type nat} parameter to each
 message refers to a slot number.\<close>
 
+datatype TermOption = NO_TERM | SomeTerm Term
+
+instantiation TermOption :: linorder
+begin
+
+fun less_TermOption :: "TermOption \<Rightarrow> TermOption \<Rightarrow> bool"
+  where "t < NO_TERM = False"
+  | "NO_TERM < SomeTerm t = True"
+  | "SomeTerm t\<^sub>1 < SomeTerm t\<^sub>2 = (t\<^sub>1 < t\<^sub>2)"
+
+definition less_eq_TermOption :: "TermOption \<Rightarrow> TermOption \<Rightarrow> bool"
+  where "(t\<^sub>1 :: TermOption) \<le> t\<^sub>2 \<equiv> t\<^sub>1 = t\<^sub>2 \<or> t\<^sub>1 < t\<^sub>2"
+
+instance proof
+  fix x y z :: TermOption
+  show "(x < y) = (x \<le> y \<and> \<not> y \<le> x)" unfolding less_eq_TermOption_def apply auto
+    using less_TermOption.elims apply fastforce
+    by (metis less_TermOption.elims(2) less_TermOption.simps(3) less_not_sym)
+
+  show "x \<le> x" by (simp add: less_eq_TermOption_def)
+
+  show "x \<le> y \<Longrightarrow> y \<le> z \<Longrightarrow> x \<le> z" unfolding less_eq_TermOption_def apply auto
+    by (metis TermOption.distinct(1) TermOption.inject dual_order.strict_trans less_TermOption.elims(2) less_TermOption.elims(3))
+
+  show "x \<le> y \<Longrightarrow> y \<le> x \<Longrightarrow> x = y" unfolding less_eq_TermOption_def apply auto
+    using \<open>(x < y) = (x \<le> y \<and> \<not> y \<le> x)\<close> less_eq_TermOption_def by blast
+
+  show "x \<le> y \<or> y \<le> x" unfolding less_eq_TermOption_def apply auto
+    by (metis TermOption.distinct(1) TermOption.inject less_TermOption.elims(3) neqE)
+qed
+
+end
 
 datatype Message
   = StartJoin Term
-  | Vote Slot Term "Term option"
+  | Vote Slot Term TermOption
   | ClientValue Value
   | PublishRequest Slot Term Value
   | PublishResponse Slot Term
@@ -76,26 +108,6 @@ record RoutedMessage =
 text \<open>It will be useful to be able to choose the optional term with the greater term,
 so here is a function that does that.\<close>
 
-fun maxTermOption :: "Term option \<Rightarrow> Term option \<Rightarrow> Term option"
-  where
-    "maxTermOption None None = None"
-  | "maxTermOption None (Some t) = Some t"
-  | "maxTermOption (Some t) None = Some t"
-  | "maxTermOption (Some t\<^sub>1) (Some t\<^sub>2) = Some (max t\<^sub>1 t\<^sub>2)"
-
-lemma maxTermOption_t_None[simp]: "maxTermOption mt None = mt" by (cases mt, auto)
-lemma maxTermOption_None_t[simp]: "maxTermOption None mt = mt" by (cases mt, auto)
-lemma maxTermOption_diagonal[simp]: "maxTermOption p p = p" by (cases p, simp_all)
-
-lemma
-  assumes "maxTermOption p1 p2 = None"
-  shows maxTermOption_eq_None_1:"p1 = None"
-    and maxTermOption_eq_None_2:"p2 = None"
-  using assms maxTermOption.elims by auto
-
-lemma maxTermOption_range: "maxTermOption p1 p2 \<in> {p1, p2}"
-  by (cases p1, simp, cases p2, simp_all add: max_def)
-
 subsection \<open>Node implementation\<close>
 
 text \<open>Each node holds the following local data.\<close>
@@ -127,14 +139,14 @@ definition lastAcceptedSlot :: "NodeData \<Rightarrow> Slot"
 definition lastAcceptedValue :: "NodeData \<Rightarrow> Value"
   where "lastAcceptedValue nd \<equiv> ladValue (THE lad. lastAcceptedData nd = Some lad)"
 
-definition lastAcceptedTerm :: "NodeData \<Rightarrow> Term option"
-  where "lastAcceptedTerm nd \<equiv> case lastAcceptedData nd of None \<Rightarrow> None | Some lad \<Rightarrow> Some (ladTerm lad)"
+definition lastAcceptedTerm :: "NodeData \<Rightarrow> TermOption"
+  where "lastAcceptedTerm nd \<equiv> case lastAcceptedData nd of None \<Rightarrow> NO_TERM | Some lad \<Rightarrow> SomeTerm (ladTerm lad)"
 
 definition isQuorum :: "NodeData \<Rightarrow> Node set \<Rightarrow> bool"
   where "isQuorum nd q \<equiv> q \<in> majorities (currentVotingNodes nd)"
 
-definition lastAcceptedTermInSlot :: "NodeData \<Rightarrow> Term option"
-  where "lastAcceptedTermInSlot nd \<equiv> if firstUncommittedSlot nd = lastAcceptedSlot nd then lastAcceptedTerm nd else None"
+definition lastAcceptedTermInSlot :: "NodeData \<Rightarrow> TermOption"
+  where "lastAcceptedTermInSlot nd \<equiv> if firstUncommittedSlot nd = lastAcceptedSlot nd then lastAcceptedTerm nd else NO_TERM"
 
 text \<open>This method publishes a value via a @{term PublishRequest} message.\<close>
 
@@ -166,11 +178,11 @@ definition ensureCurrentTerm :: "Term \<Rightarrow> NodeData \<Rightarrow> NodeD
 
 text \<open>This method updates the node's state on receipt of a vote (a @{term Vote}) in an election.\<close>
 
-definition addElectionVote :: "Node \<Rightarrow> Slot => Term option \<Rightarrow> NodeData \<Rightarrow> NodeData"
+definition addElectionVote :: "Node \<Rightarrow> Slot => TermOption \<Rightarrow> NodeData \<Rightarrow> NodeData"
   where
     "addElectionVote s i a nd \<equiv> let newVotes = insert s (joinVotes nd)
       in nd \<lparr> joinVotes := newVotes
-            , electionValueForced := electionValueForced nd \<or> (a \<noteq> None \<and> i = firstUncommittedSlot nd)
+            , electionValueForced := electionValueForced nd \<or> (a \<noteq> NO_TERM \<and> i = firstUncommittedSlot nd)
             , electionWon := isQuorum nd newVotes \<rparr>"
 
 text \<open>Clients request the cluster to achieve consensus on certain values using the @{term ClientValue}
@@ -196,16 +208,15 @@ definition handleStartJoin :: "Term \<Rightarrow> NodeData \<Rightarrow> (NodeDa
 text \<open>A @{term Vote} message is checked for acceptability and then handled as follows, perhaps
 yielding a @{term PublishRequest} message.\<close>
 
-definition handleVote :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarrow> Term option \<Rightarrow> NodeData \<Rightarrow> (NodeData * Message option)"
+definition handleVote :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarrow> TermOption \<Rightarrow> NodeData \<Rightarrow> (NodeData * Message option)"
   where
     "handleVote s i t a nd \<equiv>
          if t = currentTerm nd
              \<and> (i < firstUncommittedSlot nd
                 \<or> (i = firstUncommittedSlot nd
-                    \<and> (a = None
+                    \<and> (a = NO_TERM
                         \<or> a = lastAcceptedTermInSlot nd
-                        \<or> (maxTermOption a (lastAcceptedTermInSlot nd) = lastAcceptedTermInSlot nd
-                              \<and> electionValueForced nd))))
+                        \<or> (a < lastAcceptedTermInSlot nd \<and> electionValueForced nd))))
           then let nd1 = addElectionVote s i a nd
                in (if electionValueForced nd1 then publishValue (lastAcceptedValue nd1) nd1 else (nd1, None))
           else (nd, None)"
@@ -257,7 +268,7 @@ and \texttt{ClusterState} via the @{term applyValue} method. It yields no messag
 definition handleApplyCommit :: "Slot \<Rightarrow> Term \<Rightarrow> NodeData \<Rightarrow> NodeData"
   where
     "handleApplyCommit i t nd \<equiv>
-        if i = firstUncommittedSlot nd \<and> lastAcceptedTermInSlot nd = Some t
+        if i = firstUncommittedSlot nd \<and> lastAcceptedTermInSlot nd = SomeTerm t
           then (applyAcceptedValue nd)
                      \<lparr> firstUncommittedSlot := i + 1
                      , publishPermitted := True

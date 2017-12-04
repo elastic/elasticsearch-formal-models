@@ -49,7 +49,7 @@ locale zenMessages =
     (* set of previously-accepted terms *)
   fixes prevAccepted :: "Slot \<Rightarrow> Term \<Rightarrow> Node set \<Rightarrow> Term set"
   defines "prevAccepted i t senders
-      \<equiv> {t'. \<exists> s \<in> senders. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> }"
+      \<equiv> {t'. \<exists> s \<in> senders. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> }"
   fixes lastCommittedClusterStateBefore :: "Slot \<Rightarrow> ClusterState"
   defines "lastCommittedClusterStateBefore \<equiv> nat_inductive_def CS\<^sub>0
       (\<lambda>i CSi. case v\<^sub>c i of ClusterStateDiff diff \<Rightarrow> diff CSi | _ \<Rightarrow> CSi)"
@@ -61,16 +61,16 @@ assumes Vote_future:
             \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>"
 assumes Vote_None:
   "\<And>i s t t'.
-        \<lbrakk> s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto>; t' < t \<rbrakk>
+        \<lbrakk> s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto>; t' < t \<rbrakk>
             \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>"
 assumes Vote_Some_lt:
-  "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>
+  "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>
       \<Longrightarrow> t' < t"
 assumes Vote_Some_PublishResponse:
-  "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>
+  "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>
       \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>"
 assumes Vote_Some_max:
-  "\<And>i s t t' t''. \<lbrakk> s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>; t' < t''; t'' < t \<rbrakk>
+  "\<And>i s t t' t''. \<lbrakk> s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>; t' < t''; t'' < t \<rbrakk>
       \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>"
 assumes Vote_not_broadcast:
   "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast"
@@ -141,7 +141,7 @@ lemma (in zenMessages) PublishRequest_Vote:
 lemma (in zenMessages) finite_prevAccepted: "finite (prevAccepted i t ns)"
 proof -
   fix t\<^sub>0
-  define f :: "RoutedMessage \<Rightarrow> Term" where "f \<equiv> \<lambda> m. case payload m of Vote _ _ (Some t') \<Rightarrow> t' | _ \<Rightarrow> t\<^sub>0"
+  define f :: "RoutedMessage \<Rightarrow> Term" where "f \<equiv> \<lambda> m. case payload m of Vote _ _ (SomeTerm t') \<Rightarrow> t' | _ \<Rightarrow> t\<^sub>0"
   have "prevAccepted i t ns \<subseteq> f ` messages"
     apply (simp add: prevAccepted_def f_def isMessageFrom_def isMessageFromTo_def, intro subsetI)
     using image_iff by fastforce
@@ -149,14 +149,14 @@ proof -
 qed
 
 lemma (in zenMessages) promised_long_def: "\<exists>d. promised i s d t
-     \<equiv> (s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto>
+     \<equiv> (s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto>
            \<or> (\<exists>i'<i. \<exists>a. s \<midarrow>\<langle> Vote i' t a \<rangle>\<leadsto>))
-           \<or> (\<exists>t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>)"
+           \<or> (\<exists>t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>)"
   (is "?LHS == ?RHS")
 proof -
   have "?LHS = ?RHS"
     apply (intro iffI)
-     apply (metis option.exhaust isMessageFrom_def leI le_antisym promised_def)
+    apply (metis TermOption.exhaust isMessageFrom_def nat_less_le promised_def)
     by (metis Destination.exhaust Vote_not_broadcast isMessageFrom_def isMessageTo_def nat_less_le not_le promised_def)
   thus "?LHS == ?RHS" by simp
 qed
@@ -165,15 +165,15 @@ lemma (in zenMessages) Vote_value_function:
   assumes "s \<midarrow>\<langle> Vote i t a\<^sub>1 \<rangle>\<leadsto>" and "s \<midarrow>\<langle> Vote i t a\<^sub>2 \<rangle>\<leadsto>"
   shows "a\<^sub>1 = a\<^sub>2"
 proof (cases a\<^sub>1)
-  case None
+  case NO_TERM
   with assms show ?thesis
-    by (metis Vote_None Vote_Some_PublishResponse Vote_Some_lt option.exhaust)
+    by (metis TermOption.exhaust Vote_None Vote_Some_PublishResponse Vote_Some_lt)
 next
-  case (Some t\<^sub>1)
-  with assms obtain t\<^sub>2 where a\<^sub>2: "a\<^sub>2 = Some t\<^sub>2"
-    using Vote_None Vote_Some_PublishResponse Vote_Some_lt option.exhaust by metis
+  case (SomeTerm t\<^sub>1)
+  with assms obtain t\<^sub>2 where a\<^sub>2: "a\<^sub>2 = SomeTerm t\<^sub>2"
+    using Vote_None Vote_Some_PublishResponse Vote_Some_lt TermOption.exhaust by metis
 
-  from Some a\<^sub>2 assms show ?thesis
+  from SomeTerm a\<^sub>2 assms show ?thesis
     by (metis Vote_Some_PublishResponse Vote_Some_lt less_linear Vote_Some_max)
 qed
 
@@ -207,7 +207,7 @@ proof -
 qed
 
 lemma (in zenMessages) Vote_PublishRequest_v:
-  assumes "\<langle> Vote i t (Some t') \<rangle>\<leadsto>"
+  assumes "\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>"
   shows "\<langle> PublishRequest i t' (v i t') \<rangle>\<leadsto>"
   using assms Vote_Some_PublishResponse PublishResponse_PublishRequest_v
   unfolding isMessage_def by metis
@@ -220,9 +220,9 @@ oneSlot} model above.\<close>
 lemma (in zenMessages) zen_is_oneSlot:
   fixes i
   shows "oneSlot (majorities (V i)) (v i)
-    (\<lambda> s t. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto>
+    (\<lambda> s t. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto>
         \<or> (\<exists> i' < i. \<exists> a. s \<midarrow>\<langle> Vote i' t a \<rangle>\<leadsto>))
-    (\<lambda> s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>)
+    (\<lambda> s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>)
     (\<lambda> t. \<exists> x. \<langle> PublishRequest i t x \<rangle>\<leadsto>)
     (\<lambda> s t. s \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>)
     (\<lambda> t. \<langle> ApplyCommit i t \<rangle>\<leadsto>)"
@@ -230,12 +230,12 @@ proof (unfold_locales, fold prevAccepted_def promised_long_def)
   from V_intersects show "majorities (V i) \<frown> majorities (V i)".
 next
   fix s t t'
-  assume "t' < t" "s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<or> (\<exists>i'<i. \<exists>a. s \<midarrow>\<langle> Vote i' t a \<rangle>\<leadsto>)"
+  assume "t' < t" "s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<or> (\<exists>i'<i. \<exists>a. s \<midarrow>\<langle> Vote i' t a \<rangle>\<leadsto>)"
   thus "\<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>"
     using Vote_None Vote_future by auto
 next
   fix s t t'
-  assume j: "s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>"
+  assume j: "s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>"
   from j show "t' < t" using Vote_Some_lt by blast
   from j show "s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>" using Vote_Some_PublishResponse by blast
 
@@ -316,18 +316,18 @@ locale zen = zenMessages +
   assumes firstUncommittedSlot_PublishRequest:
     "\<And>i n t x. firstUncommittedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishRequest i t x \<rangle>\<leadsto>"
   assumes lastAcceptedSlot_firstUncommittedSlot:
-    "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)"
+    "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)"
   assumes lastAcceptedSlot_PublishResponse:
-    "\<And>i n t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>"
-  assumes lastAcceptedTerm_None: "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>"
-  assumes lastAcceptedTerm_Some_sent: "\<And>n t. lastAcceptedTerm (nodeState n) = Some t
+    "\<And>i n t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>"
+  assumes lastAcceptedTerm_None: "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>"
+  assumes lastAcceptedTerm_Some_sent: "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t
     \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>"
-  assumes lastAcceptedTerm_Some_max: "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t
+  assumes lastAcceptedTerm_Some_max: "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t
     \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto>
     \<Longrightarrow> t' \<le> t"
-  assumes lastAcceptedTerm_Some_currentTerm: "\<And>n t. lastAcceptedTerm (nodeState n) = Some t
+  assumes lastAcceptedTerm_Some_currentTerm: "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t
     \<Longrightarrow> t \<le> currentTerm (nodeState n)"
-  assumes lastAcceptedTerm_Some_value: "\<And>n t. lastAcceptedTerm (nodeState n) = Some t
+  assumes lastAcceptedTerm_Some_value: "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t
     \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>"
   assumes Vote_currentTerm:
     "\<And>n i t a. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)"
@@ -349,7 +349,7 @@ locale zen = zenMessages +
     \<lbrakk> \<not> electionValueForced (nodeState n); n' \<in> joinVotes (nodeState n) \<rbrakk>
     \<Longrightarrow> (n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n))
                            (currentTerm (nodeState n))
-                           None \<rangle>\<rightarrow> (OneNode n))
+                           NO_TERM \<rangle>\<rightarrow> (OneNode n))
     \<or> (\<exists> i < firstUncommittedSlot (nodeState n). \<exists> a.
         n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))"
   assumes electionValueForced_Vote: "\<And>n.
@@ -366,7 +366,7 @@ locale zen = zenMessages +
       n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n))
                                 (currentTerm (nodeState n))
                                 a' \<rangle>\<rightarrow> (OneNode n) \<rbrakk>
-    \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState n)) = lastAcceptedTermInSlot (nodeState n)"
+    \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState n)"
   assumes publishVotes: "\<And>n n'. n' \<in> publishVotes (nodeState n)
     \<Longrightarrow> n' \<midarrow>\<langle> PublishResponse (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) \<rangle>\<leadsto>"
   assumes currentClusterState_lastCommittedClusterStateBefore:
@@ -413,7 +413,7 @@ defines "promised' i s dn t \<equiv> \<exists> i' \<le> i. \<exists> a. s \<mida
   (* set of previously-accepted terms *)
 fixes prevAccepted' :: "nat \<Rightarrow> Term \<Rightarrow> Node set \<Rightarrow> Term set"
 defines "prevAccepted' i t senders
-      \<equiv> {t'. \<exists> s \<in> senders. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>' }"
+      \<equiv> {t'. \<exists> s \<in> senders. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>' }"
 fixes lastCommittedClusterStateBefore' :: "nat \<Rightarrow> ClusterState"
 defines "lastCommittedClusterStateBefore' \<equiv> nat_inductive_def CS\<^sub>0
       (\<lambda>i CSi. case v\<^sub>c' i of ClusterStateDiff diff \<Rightarrow> diff CSi | _ \<Rightarrow> CSi)"
@@ -444,10 +444,10 @@ lemma currentTerm_ensureCurrentTerm[simp]: "currentTerm nd \<le> t \<Longrightar
 
 lemma (in zenStep)
   assumes "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto>' \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>'"
-  assumes "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto>' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>'"
-  assumes "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>' \<Longrightarrow> t' < t"
-  assumes "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>' \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>'"
-  assumes "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>' \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>'"
+  assumes "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto>' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>'"
+  assumes "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>' \<Longrightarrow> t' < t"
+  assumes "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>' \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>'"
+  assumes "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>' \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>'"
   assumes "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow>' d \<Longrightarrow> d \<noteq> Broadcast"
   assumes "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow>' d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow>' d' \<Longrightarrow> d = d'"
   assumes "\<And>i t x. \<langle> PublishRequest i t x \<rangle>\<leadsto>' \<Longrightarrow> committed\<^sub><' i"
@@ -460,22 +460,22 @@ lemma (in zenStep)
   assumes "\<And>n. committed\<^sub><' (firstUncommittedSlot (nodeState' n))"
   assumes "\<And>n. currentVotingNodes (nodeState' n) = V' (firstUncommittedSlot (nodeState' n))"
   assumes "\<And>i n t x. firstUncommittedSlot (nodeState' n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishRequest i t x \<rangle>\<leadsto>'"
-  assumes "\<And>n. lastAcceptedTerm (nodeState' n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState' n) \<le> firstUncommittedSlot (nodeState' n)"
-  assumes "\<And>i n t. lastAcceptedTerm (nodeState' n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState' n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>'"
-  assumes "\<And>n i t. lastAcceptedTerm (nodeState' n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>'"
-  assumes "\<And>n t. lastAcceptedTerm (nodeState' n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState' n)) t \<rangle>\<leadsto>'"
-  assumes "\<And>n t t'. lastAcceptedTerm (nodeState' n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState' n)) t' \<rangle>\<leadsto>' \<Longrightarrow> t' \<le> t"
-  assumes "\<And>n t. lastAcceptedTerm (nodeState' n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState' n)) t (lastAcceptedValue (nodeState' n)) \<rangle>\<leadsto>'"
-  assumes "\<And>n t. lastAcceptedTerm (nodeState' n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState' n)"
+  assumes "\<And>n. lastAcceptedTerm (nodeState' n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState' n) \<le> firstUncommittedSlot (nodeState' n)"
+  assumes "\<And>i n t. lastAcceptedTerm (nodeState' n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState' n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>'"
+  assumes "\<And>n i t. lastAcceptedTerm (nodeState' n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>'"
+  assumes "\<And>n t. lastAcceptedTerm (nodeState' n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState' n)) t \<rangle>\<leadsto>'"
+  assumes "\<And>n t t'. lastAcceptedTerm (nodeState' n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState' n)) t' \<rangle>\<leadsto>' \<Longrightarrow> t' \<le> t"
+  assumes "\<And>n t. lastAcceptedTerm (nodeState' n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState' n)) t (lastAcceptedValue (nodeState' n)) \<rangle>\<leadsto>'"
+  assumes "\<And>n t. lastAcceptedTerm (nodeState' n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState' n)"
   assumes "\<And>n i t a. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto>' \<Longrightarrow> t \<le> currentTerm (nodeState' n)"
   assumes "\<And>n i i' t a a'. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto>' \<Longrightarrow> n \<midarrow>\<langle> Vote i' t a' \<rangle>\<leadsto>' \<Longrightarrow> i = i'"
   assumes "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) t x \<rangle>\<leadsto>' \<Longrightarrow> t \<le> currentTerm (nodeState' n)"
   assumes "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) t x \<rangle>\<leadsto>' \<Longrightarrow> publishPermitted (nodeState' n) \<Longrightarrow> t < currentTerm (nodeState' n)"
   assumes "\<And>n n'. n' \<in> joinVotes (nodeState' n) \<Longrightarrow> promised' (firstUncommittedSlot (nodeState' n)) n' n (currentTerm (nodeState' n))"
   assumes "\<And>n. electionWon (nodeState' n) \<Longrightarrow> isQuorum (nodeState' n) (joinVotes (nodeState' n))"
-  assumes "\<And>n n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState' n)) None \<rangle>\<rightarrow>' (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState' n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState' n)) a \<rangle>\<rightarrow>' (OneNode n))"
+  assumes "\<And>n n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState' n)) NO_TERM \<rangle>\<rightarrow>' (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState' n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState' n)) a \<rangle>\<rightarrow>' (OneNode n))"
   assumes "\<And>n. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState' n)) x \<rangle>\<leadsto>') \<Longrightarrow> \<exists>n'\<in>joinVotes (nodeState' n). n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState' n)) (lastAcceptedTermInSlot (nodeState' n)) \<rangle>\<rightarrow>' (OneNode n)"
-  assumes "\<And>n n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState' n)) x \<rangle>\<leadsto>') \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState' n)) a' \<rangle>\<rightarrow>' (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState' n)) = lastAcceptedTermInSlot (nodeState' n)"
+  assumes "\<And>n n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState' n)) x \<rangle>\<leadsto>') \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState' n)) a' \<rangle>\<rightarrow>' (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState' n)"
   assumes "\<And>n n'. n' \<in> publishVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> PublishResponse (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState' n)) \<rangle>\<leadsto>'"
   assumes "\<And>n. currentClusterState (nodeState' n) = lastCommittedClusterStateBefore' (firstUncommittedSlot (nodeState' n))"
   assumes "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto>' \<Longrightarrow> committed\<^sub><' i"
@@ -575,25 +575,25 @@ proof -
   proof -
     from finite_messages show "finite messages'" by (simp add: messages')
     from Vote_future show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>".
-    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
-    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
+    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
+    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
     from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast".
     from Vote_unique_destination show "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow> d' \<Longrightarrow> d = d'".
     from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
     from committedTo_firstUncommittedSlot show "\<And>n. committed\<^sub>< (firstUncommittedSlot (nodeState n))" .
-    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
-    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
-    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
+    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
+    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
+    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
     from Vote_currentTerm show "\<And>n i t a. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from Vote_slot_function show "\<And>n i i' t a a'. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> n \<midarrow>\<langle> Vote i' t a' \<rangle>\<leadsto> \<Longrightarrow> i = i'".
     from electionWon_isQuorum show "\<And>n. electionWon (nodeState n) \<Longrightarrow> isQuorum (nodeState n) (joinVotes (nodeState n))".
-    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) None \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
+    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) NO_TERM \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
     from electionValueForced_Vote show "\<And>n. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> \<exists>n'\<in>joinVotes (nodeState n). n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) (lastAcceptedTermInSlot (nodeState n)) \<rangle>\<rightarrow> (OneNode n)".
-    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState n)) = lastAcceptedTermInSlot (nodeState n)".
+    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState n)".
     from publishVotes show "\<And>n n'. n' \<in> publishVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> PublishResponse (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) \<rangle>\<leadsto>".
     from currentClusterState_lastCommittedClusterStateBefore show "\<And>n. currentClusterState (nodeState n) = lastCommittedClusterStateBefore (firstUncommittedSlot (nodeState n))".
     from joinVotes show "\<And>n n'. n' \<in> joinVotes (nodeState n) \<Longrightarrow> promised (firstUncommittedSlot (nodeState n)) n' n (currentTerm (nodeState n))".
@@ -604,13 +604,13 @@ proof -
     from ApplyCommit_quorum show "\<And>i t. \<langle> ApplyCommit i t \<rangle>\<leadsto> \<Longrightarrow> \<exists>q\<in>majorities (V i). \<forall>s\<in>q. s \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
     from currentVotingNodes_firstUncommittedSlot show "\<And>n. currentVotingNodes (nodeState n) = V (firstUncommittedSlot (nodeState n))".
     from firstUncommittedSlot_PublishRequest show "\<And>i n t x. firstUncommittedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishRequest i t x \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
     from PublishRequest_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from PublishRequest_publishPermitted_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> publishPermitted (nodeState n) \<Longrightarrow> t < currentTerm (nodeState n)".
     from CatchUpResponse_committedTo show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> committed\<^sub>< i".
     from CatchUpResponse_V show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> V i = conf".
     from CatchUpResponse_lastCommittedClusterStateBefore show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> lastCommittedClusterStateBefore i = cs".
-    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
+    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
   qed
 qed
 
@@ -683,25 +683,25 @@ proof -
   proof -
     from finite_messages show "finite messages'" by (simp add: messages')
     from Vote_future show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>".
-    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
-    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
+    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
+    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
     from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast".
     from Vote_unique_destination show "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow> d' \<Longrightarrow> d = d'".
     from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
     from committedTo_firstUncommittedSlot show "\<And>n. committed\<^sub>< (firstUncommittedSlot (nodeState n))" .
-    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
-    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
-    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
+    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
+    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
+    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
     from Vote_currentTerm show "\<And>n i t a. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from Vote_slot_function show "\<And>n i i' t a a'. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> n \<midarrow>\<langle> Vote i' t a' \<rangle>\<leadsto> \<Longrightarrow> i = i'".
     from electionWon_isQuorum show "\<And>n. electionWon (nodeState n) \<Longrightarrow> isQuorum (nodeState n) (joinVotes (nodeState n))".
-    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) None \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
+    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) NO_TERM \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
     from electionValueForced_Vote show "\<And>n. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> \<exists>n'\<in>joinVotes (nodeState n). n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) (lastAcceptedTermInSlot (nodeState n)) \<rangle>\<rightarrow> (OneNode n)".
-    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState n)) = lastAcceptedTermInSlot (nodeState n)".
+    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> a' \<le>  lastAcceptedTermInSlot (nodeState n)".
     from publishVotes show "\<And>n n'. n' \<in> publishVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> PublishResponse (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) \<rangle>\<leadsto>".
     from currentClusterState_lastCommittedClusterStateBefore show "\<And>n. currentClusterState (nodeState n) = lastCommittedClusterStateBefore (firstUncommittedSlot (nodeState n))".
     from joinVotes show "\<And>n n'. n' \<in> joinVotes (nodeState n) \<Longrightarrow> promised (firstUncommittedSlot (nodeState n)) n' n (currentTerm (nodeState n))".
@@ -712,13 +712,13 @@ proof -
     from ApplyCommit_quorum show "\<And>i t. \<langle> ApplyCommit i t \<rangle>\<leadsto> \<Longrightarrow> \<exists>q\<in>majorities (V i). \<forall>s\<in>q. s \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
     from currentVotingNodes_firstUncommittedSlot show "\<And>n. currentVotingNodes (nodeState n) = V (firstUncommittedSlot (nodeState n))".
     from firstUncommittedSlot_PublishRequest show "\<And>i n t x. firstUncommittedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishRequest i t x \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
     from PublishRequest_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from PublishRequest_publishPermitted_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> publishPermitted (nodeState n) \<Longrightarrow> t < currentTerm (nodeState n)".
     from CatchUpResponse_committedTo show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> committed\<^sub>< i".
     from CatchUpResponse_V show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> V i = conf".
     from CatchUpResponse_lastCommittedClusterStateBefore show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> lastCommittedClusterStateBefore i = cs".
-    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
+    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
   qed
 qed
 
@@ -806,19 +806,19 @@ next
   proof -
     from finite_messages show "finite messages'" by (simp add: messages')
     from Vote_future show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>".
-    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
-    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
+    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
+    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
     from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast".
     from Vote_unique_destination show "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow> d' \<Longrightarrow> d = d'".
     from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
     from committedTo_firstUncommittedSlot show "\<And>n. committed\<^sub>< (firstUncommittedSlot (nodeState n))" .
-    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
-    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
-    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
+    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
+    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
+    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
     from Vote_slot_function show "\<And>n i i' t a a'. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> n \<midarrow>\<langle> Vote i' t a' \<rangle>\<leadsto> \<Longrightarrow> i = i'".
     from currentClusterState_lastCommittedClusterStateBefore show "\<And>n. currentClusterState (nodeState n) = lastCommittedClusterStateBefore (firstUncommittedSlot (nodeState n))".
     from PublishRequest_committedTo show "\<And>i t x. \<langle> PublishRequest i t x \<rangle>\<leadsto> \<Longrightarrow> committed\<^sub>< i".
@@ -827,7 +827,7 @@ next
     from ApplyCommit_quorum show "\<And>i t. \<langle> ApplyCommit i t \<rangle>\<leadsto> \<Longrightarrow> \<exists>q\<in>majorities (V i). \<forall>s\<in>q. s \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
     from currentVotingNodes_firstUncommittedSlot show "\<And>n. currentVotingNodes (nodeState n) = V (firstUncommittedSlot (nodeState n))".
     from firstUncommittedSlot_PublishRequest show "\<And>i n t x. firstUncommittedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishRequest i t x \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
     from PublishRequest_quorum show "\<And>i s t x. s \<midarrow>\<langle> PublishRequest i t x \<rangle>\<leadsto> \<Longrightarrow> \<exists>q\<in>majorities (V i). (\<forall>n\<in>q. promised i n s t) \<and> (prevAccepted i t q = {} \<or> v i t = v i (maxTerm (prevAccepted i t q)))".
     from CatchUpResponse_committedTo show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> committed\<^sub>< i".
     from CatchUpResponse_V show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> V i = conf".
@@ -854,7 +854,7 @@ next
       unfolding nodeState'_def by (auto simp add: nd'_def)
 
     from electionValueFree_Vote
-    show "\<And>n n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState' n)) None \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState' n)) a \<rangle>\<rightarrow> (OneNode n))"
+    show "\<And>n n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState' n)) NO_TERM \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState' n)) a \<rangle>\<rightarrow> (OneNode n))"
       unfolding nodeState'_def by (auto simp add: nd'_def, blast)
 
     from electionValueForced_Vote
@@ -866,11 +866,11 @@ next
 
     fix n
     from electionValueForced_max
-    show "\<And>n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState' n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState' n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState n)) = lastAcceptedTermInSlot (nodeState n)"
+    show "\<And>n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState' n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState' n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState n)"
       unfolding nodeState'_def by (cases "n = n\<^sub>0", auto simp add: nd'_def)
 
     from lastAcceptedTerm_Some_currentTerm currentTerm_increases
-    show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState' n)"
+    show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState' n)"
       using dual_order.trans by blast
   qed
 qed
@@ -880,7 +880,7 @@ lemma (in zenStep) sendVote_invariants:
     Some (Vote (firstUncommittedSlot nd) (currentTerm nd) (lastAcceptedTermInSlot nd)))"
   assumes nd': "nd' = nd"
   assumes not_sent: "\<And>i a. \<not> n\<^sub>0 \<midarrow>\<langle> Vote i (currentTerm nd) a \<rangle>\<leadsto>"
-  assumes not_accepted: "\<And>t'. lastAcceptedTerm nd = Some t' \<Longrightarrow> t' < currentTerm nd"
+  assumes not_accepted: "\<And>t'. lastAcceptedTerm nd = SomeTerm t' \<Longrightarrow> t' < currentTerm nd"
   shows "zen messages' nodeState'"
 proof -
   have messages': "messages' = insert \<lparr>sender = n\<^sub>0, destination = OneNode d\<^sub>0,
@@ -937,7 +937,7 @@ proof -
   have promised_eq: "\<And>i s dn t. promised' i s dn t = (promised i s dn t \<or> (firstUncommittedSlot nd \<le> i \<and> s = n\<^sub>0 \<and> dn = d\<^sub>0 \<and> t = currentTerm nd))"
     unfolding promised'_def promised_def Vote' by auto
 
-  have prevAccepted_eq: "\<And>i t q. prevAccepted' i t q = prevAccepted i t q \<union> {t'. n\<^sub>0 \<in> q \<and> i = firstUncommittedSlot nd \<and> t = currentTerm nd \<and> lastAcceptedTermInSlot nd = Some t'}"
+  have prevAccepted_eq: "\<And>i t q. prevAccepted' i t q = prevAccepted i t q \<union> {t'. n\<^sub>0 \<in> q \<and> i = firstUncommittedSlot nd \<and> t = currentTerm nd \<and> lastAcceptedTermInSlot nd = SomeTerm t'}"
     unfolding prevAccepted_def prevAccepted'_def Vote' by auto
 
   have property_simps[simp]:
@@ -965,11 +965,11 @@ proof -
     from finite_messages show "finite messages'" by (simp add: messages')
     from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
     from committedTo_firstUncommittedSlot show "\<And>n. committed\<^sub>< (firstUncommittedSlot (nodeState n))" .
-    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
-    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
-    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
+    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
+    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
+    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
     from electionWon_isQuorum show "\<And>n. electionWon (nodeState n) \<Longrightarrow> isQuorum (nodeState n) (joinVotes (nodeState n))".
     from publishVotes show "\<And>n n'. n' \<in> publishVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> PublishResponse (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) \<rangle>\<leadsto>".
     from currentClusterState_lastCommittedClusterStateBefore show "\<And>n. currentClusterState (nodeState n) = lastCommittedClusterStateBefore (firstUncommittedSlot (nodeState n))".
@@ -979,18 +979,18 @@ proof -
     from ApplyCommit_quorum show "\<And>i t. \<langle> ApplyCommit i t \<rangle>\<leadsto> \<Longrightarrow> \<exists>q\<in>majorities (V i). \<forall>s\<in>q. s \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
     from currentVotingNodes_firstUncommittedSlot show "\<And>n. currentVotingNodes (nodeState n) = V (firstUncommittedSlot (nodeState n))".
     from firstUncommittedSlot_PublishRequest show "\<And>i n t x. firstUncommittedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishRequest i t x \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
     from PublishRequest_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from PublishRequest_publishPermitted_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> publishPermitted (nodeState n) \<Longrightarrow> t < currentTerm (nodeState n)".
     from CatchUpResponse_committedTo show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> committed\<^sub>< i".
     from CatchUpResponse_V show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> V i = conf".
     from CatchUpResponse_lastCommittedClusterStateBefore show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> lastCommittedClusterStateBefore i = cs".
-    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
+    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
 
     from Vote_currentTerm show "\<And>n i t a. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto>' \<Longrightarrow> t \<le> currentTerm (nodeState n)"
       unfolding Vote' by (auto simp add: nd_def)
 
-    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) None \<rangle>\<rightarrow>' (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow>' (OneNode n))"
+    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) NO_TERM \<rangle>\<rightarrow>' (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow>' (OneNode n))"
       unfolding Vote' by (auto simp add: nd_def)
 
     from electionValueForced_Vote show "\<And>n. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> \<exists>n'\<in>joinVotes (nodeState n). n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) (lastAcceptedTermInSlot (nodeState n)) \<rangle>\<rightarrow>' (OneNode n)"
@@ -1003,21 +1003,21 @@ proof -
     show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto>' \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>"
       unfolding Vote' nd_def by (smt lastAcceptedTerm_None le_trans not_le prod.inject)
 
-    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto>' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>"
+    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto>' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>"
       unfolding Vote' using Vote_future lastAcceptedTerm_None lastAcceptedSlot_firstUncommittedSlot nd' nd'_def
       by (metis Pair_inject lastAcceptedSlot_PublishResponse lastAcceptedTermInSlot_def le_less nodeState')
 
-    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>' \<Longrightarrow> t' < t"
+    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>' \<Longrightarrow> t' < t"
       unfolding Vote' using not_accepted lastAcceptedTermInSlot_def
-      by (smt fst_conv option.distinct(1) snd_conv)
+      by (smt fst_conv TermOption.distinct(1) snd_conv)
 
-    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>' \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>"
+    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>' \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>"
       unfolding Vote' lastAcceptedTermInSlot_def using lastAcceptedTerm_Some_sent nd' nd'_def nd_def
-      by (smt Pair_inject option.distinct(1))
+      by (smt Pair_inject TermOption.distinct(1))
 
-    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>' \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>"
+    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>' \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>"
       unfolding Vote' lastAcceptedTermInSlot_def nd_def
-      by (smt Pair_inject \<open>\<And>t' t na. \<lbrakk>lastAcceptedTerm (nodeState na) = Some t; na \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState na)) t' \<rangle>\<leadsto>\<rbrakk> \<Longrightarrow> t' \<le> t\<close> leD option.discI)
+      by (smt Pair_inject TermOption.distinct(1) \<open>\<And>t' t na. \<lbrakk>lastAcceptedTerm (nodeState na) = SomeTerm t; na \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState na)) t' \<rangle>\<leadsto>\<rbrakk> \<Longrightarrow> t' \<le> t\<close> leD)
 
     from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow>' d \<Longrightarrow> d \<noteq> Broadcast"
       unfolding Vote' by blast
@@ -1029,7 +1029,7 @@ proof -
       unfolding Vote'
       by (metis Vote'(3) Message.inject(2) RoutedMessage.ext_inject insert_iff isMessageFrom'_def isMessageFromTo'_def isMessageFromTo_def isMessageFrom_def messages' not_sent)
 
-    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow>' (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState n)) = lastAcceptedTermInSlot (nodeState n)"
+    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow>' (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState n)"
       unfolding Vote'
       by (smt Vote'(1) Message.inject(2) RoutedMessage.ext_inject insert_iff isMessageFromTo'_def isMessageFrom_def joinVotes messages' not_sent promised_def zen.Vote_slot_function zenMessages.Vote_value_function zenMessages_axioms zen_axioms)
 
@@ -1100,7 +1100,7 @@ next
   proof (intro zenStep.sendVote_invariants [OF zenStep1], unfold nd'_eq currentTerm_nd', simp_all add: messages' result lastAcceptedTermInSlot_def)
     show "\<And>i a. \<forall>d. \<lparr>sender = n\<^sub>0, destination = d, payload = Vote i t a\<rparr> \<notin> messages"
       using nd_def new_term zen.Vote_currentTerm zen_axioms by fastforce
-    show "\<And>t'. lastAcceptedTerm nd = Some t' \<Longrightarrow> t' < t" using True lastAcceptedTerm_Some_currentTerm unfolding nd_def by fastforce
+    show "\<And>t'. lastAcceptedTerm nd = SomeTerm t' \<Longrightarrow> t' < t" using True lastAcceptedTerm_Some_currentTerm unfolding nd_def by fastforce
   qed auto
 qed
 
@@ -1111,10 +1111,9 @@ lemma (in zenStep) addElectionVote_invariants:
   assumes precondition:
     "i < firstUncommittedSlot nd
         \<or> (i = firstUncommittedSlot nd
-            \<and> (a = None
+            \<and> (a = NO_TERM
                 \<or> a = lastAcceptedTermInSlot nd
-                \<or> (maxTermOption a (lastAcceptedTermInSlot nd) = lastAcceptedTermInSlot nd
-                      \<and> electionValueForced nd)))"
+                \<or> (a < lastAcceptedTermInSlot nd \<and> electionValueForced nd)))"
   shows "zen messages' nodeState'"
 proof -
   from precondition have slot: "i \<le> firstUncommittedSlot nd" by auto
@@ -1145,7 +1144,7 @@ proof -
 
   have updated_properties:
     "\<And>n. joinVotes (nodeState' n) = joinVotes (nodeState n) \<union> (if n = n\<^sub>0 then {s} else {})"
-    "\<And>n. electionValueForced (nodeState' n) = (electionValueForced (nodeState n) \<or> (n = n\<^sub>0 \<and> i = firstUncommittedSlot nd \<and> a \<noteq> None))"
+    "\<And>n. electionValueForced (nodeState' n) = (electionValueForced (nodeState n) \<or> (n = n\<^sub>0 \<and> i = firstUncommittedSlot nd \<and> a \<noteq> NO_TERM))"
     "\<And>n. electionWon (nodeState' n) = (if n = n\<^sub>0 then isQuorum nd (insert s (joinVotes nd)) else electionWon (nodeState n))"
     unfolding nodeState'_def by (auto simp add: nd' addElectionVote_def Let_def nd_def)
 
@@ -1165,19 +1164,19 @@ proof -
   proof -
     from finite_messages show "finite messages'" by (simp add: messages')
     from Vote_future show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>".
-    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
-    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
+    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
+    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
     from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast".
     from Vote_unique_destination show "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow> d' \<Longrightarrow> d = d'".
     from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
     from committedTo_firstUncommittedSlot show "\<And>n. committed\<^sub>< (firstUncommittedSlot (nodeState n))" .
-    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
-    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
-    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
+    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
+    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
+    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
     from Vote_currentTerm show "\<And>n i t a. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from Vote_slot_function show "\<And>n i i' t a a'. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> n \<midarrow>\<langle> Vote i' t a' \<rangle>\<leadsto> \<Longrightarrow> i = i'".
     from publishVotes show "\<And>n n'. n' \<in> publishVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> PublishResponse (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) \<rangle>\<leadsto>".
@@ -1188,14 +1187,14 @@ proof -
     from ApplyCommit_quorum show "\<And>i t. \<langle> ApplyCommit i t \<rangle>\<leadsto> \<Longrightarrow> \<exists>q\<in>majorities (V i). \<forall>s\<in>q. s \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
     from currentVotingNodes_firstUncommittedSlot show "\<And>n. currentVotingNodes (nodeState n) = V (firstUncommittedSlot (nodeState n))".
     from firstUncommittedSlot_PublishRequest show "\<And>i n t x. firstUncommittedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishRequest i t x \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
     from PublishRequest_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from PublishRequest_publishPermitted_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> publishPermitted (nodeState n) \<Longrightarrow> t < currentTerm (nodeState n)".
     from PublishRequest_quorum show "\<And>i s t x. s \<midarrow>\<langle> PublishRequest i t x \<rangle>\<leadsto> \<Longrightarrow> \<exists>q\<in>majorities (V i). (\<forall>n\<in>q. promised i n s t) \<and> (prevAccepted i t q = {} \<or> v i t = v i (maxTerm (prevAccepted i t q)))".
     from CatchUpResponse_committedTo show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> committed\<^sub>< i".
     from CatchUpResponse_V show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> V i = conf".
     from CatchUpResponse_lastCommittedClusterStateBefore show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> lastCommittedClusterStateBefore i = cs".
-    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
+    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
 
     from electionWon_isQuorum show "\<And>n. electionWon (nodeState' n) \<Longrightarrow> isQuorum (nodeState n) (joinVotes (nodeState' n))"
       unfolding updated_properties by (auto simp add: nd_def)
@@ -1203,7 +1202,7 @@ proof -
     fix n
 
     from electionValueFree_Vote
-    show "\<And>n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) None \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))"
+    show "\<And>n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) NO_TERM \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))"
       using precondition sent unfolding updated_properties nd_def by (cases "n = n\<^sub>0", auto)
 
     from joinVotes nd_def precondition sent
@@ -1216,9 +1215,9 @@ proof -
       using precondition sent unfolding updated_properties nd_def by (cases "n = n\<^sub>0", auto)
 
     from electionValueForced_max nd_def
-    show "\<And>n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState n)) = lastAcceptedTermInSlot (nodeState n)"
+    show "\<And>n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState n)"
       using precondition sent unfolding updated_properties nd_def apply (cases "n = n\<^sub>0", simp_all)
-      by (metis electionValueFree_Vote isMessageFromTo_def maxTermOption_None_t maxTermOption_diagonal nat_neq_iff zen.Vote_slot_function zenMessages.Vote_value_function zenMessages_axioms zen_axioms)
+      sorry
 
   qed
 qed
@@ -1402,7 +1401,7 @@ next
     assume nonempty: "prevAccepted i t q \<noteq> {}"
     have "maxTerm (prevAccepted i t q) \<in> prevAccepted i t q"
       by (intro maxTerm_mem finite_prevAccepted nonempty)
-    hence "\<langle> Vote i t (Some (maxTerm (prevAccepted i t q))) \<rangle>\<leadsto>"
+    hence "\<langle> Vote i t (SomeTerm (maxTerm (prevAccepted i t q))) \<rangle>\<leadsto>"
       by (auto simp add: prevAccepted_def isMessage_def)
     hence "\<langle> PublishResponse i (maxTerm (prevAccepted i t q)) \<rangle>\<leadsto>"
       using Vote_Some_PublishResponse unfolding isMessage_def by blast
@@ -1437,28 +1436,28 @@ next
         lastCommittedClusterStateBefore_slot_eq property_simps promised_eq prevAccepted_eq)
   proof -
     from Vote_future show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>".
-    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
-    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
+    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
+    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
     from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast".
     from Vote_unique_destination show "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow> d' \<Longrightarrow> d = d'".
     from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
     from committedTo_firstUncommittedSlot show "\<And>n. committed\<^sub>< (firstUncommittedSlot (nodeState n))" .
-    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
-    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
-    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
+    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
+    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
+    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
     from Vote_currentTerm show "\<And>n i t a. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from Vote_slot_function show "\<And>n i i' t a a'. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> n \<midarrow>\<langle> Vote i' t a' \<rangle>\<leadsto> \<Longrightarrow> i = i'".
     from electionWon_isQuorum show "\<And>n. electionWon (nodeState n) \<Longrightarrow> isQuorum (nodeState n) (joinVotes (nodeState n))".
-    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) None \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
+    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) NO_TERM \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
     from publishVotes show "\<And>n n'. n' \<in> publishVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> PublishResponse (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) \<rangle>\<leadsto>".
     from currentClusterState_lastCommittedClusterStateBefore show "\<And>n. currentClusterState (nodeState n) = lastCommittedClusterStateBefore (firstUncommittedSlot (nodeState n))".
     from joinVotes show "\<And>n n'. n' \<in> joinVotes (nodeState n) \<Longrightarrow> promised (firstUncommittedSlot (nodeState n)) n' n (currentTerm (nodeState n))".
     from currentVotingNodes_firstUncommittedSlot show "\<And>n. currentVotingNodes (nodeState n) = V (firstUncommittedSlot (nodeState n))".
-    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
+    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
 
     {
       fix i conf cs assume a: "\<langle> CatchUpResponse i conf cs \<rangle>\<leadsto>"
@@ -1468,7 +1467,7 @@ next
     }
 
     from lastAcceptedTerm_Some_value  PublishRequest'
-    show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>'"
+    show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>'"
       by (meson isMessage'_def isMessageFrom'_def isMessageFrom_def isMessage_def)
 
     from PublishRequest_currentTerm
@@ -1508,7 +1507,7 @@ next
       by (cases "n = n\<^sub>0", simp_all add: nodeState'_def nd' PublishRequest')
 
     from electionValueForced_max
-    show "\<And>n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>') \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState n)) = lastAcceptedTermInSlot (nodeState n)"
+    show "\<And>n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>') \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState n)"
       by (cases "n = n\<^sub>0", auto simp add: nodeState'_def nd' PublishRequest')
 
     {
@@ -1563,7 +1562,7 @@ next
             have electionValueForced_nd: "electionValueForced nd"
             proof (rule ccontr)
               from False obtain s' t'
-                where s_vote: "s' \<in> joinVotes nd" and s_sent: "s' \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto>"
+                where s_vote: "s' \<in> joinVotes nd" and s_sent: "s' \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto>"
                 unfolding prevAccepted_def q_def by blast
 
               assume "\<not> electionValueForced nd"
@@ -1575,16 +1574,16 @@ next
             from False finite_prevAccepted have "maxTerm (prevAccepted i t q) \<in> prevAccepted i t q"
               by (intro maxTerm_mem)
             then obtain n' where n'_vote: "n' \<in> q"
-              and n'_sent: "n' \<midarrow>\<langle> Vote i t (Some (maxTerm (prevAccepted i t q))) \<rangle>\<leadsto>"
+              and n'_sent: "n' \<midarrow>\<langle> Vote i t (SomeTerm (maxTerm (prevAccepted i t q))) \<rangle>\<leadsto>"
               unfolding prevAccepted_def by auto (* n' : q \<Longrightarrow> n' sent its Vote to n\<^sub>0 *)
 
-            have n'_sent: "n' \<midarrow>\<langle> Vote i t (Some (maxTerm (prevAccepted i t q))) \<rangle>\<rightarrow> (OneNode n\<^sub>0)"
+            have n'_sent: "n' \<midarrow>\<langle> Vote i t (SomeTerm (maxTerm (prevAccepted i t q))) \<rangle>\<rightarrow> (OneNode n\<^sub>0)"
             proof -
               from n'_vote joinVotes have "promised i n' n\<^sub>0 t" by (auto simp add: q_def nd_def)
               then obtain i'' a'' where 1: "n' \<midarrow>\<langle> Vote i'' t a'' \<rangle>\<rightarrow> (OneNode n\<^sub>0)" unfolding promised_def by auto
               hence 2: "n' \<midarrow>\<langle> Vote i'' t a'' \<rangle>\<leadsto>" by (auto simp add: isMessageFrom_def)
               from n'_sent 2 have [simp]: "i'' = i" by (intro Vote_slot_function)
-              from n'_sent 2 have [simp]: "a'' = (Some (maxTerm (prevAccepted i t q)))"
+              from n'_sent 2 have [simp]: "a'' = (SomeTerm (maxTerm (prevAccepted i t q)))"
                 by (intro Vote_value_function, simp_all)
               from 1 show ?thesis by simp
             qed
@@ -1609,24 +1608,25 @@ next
               show "\<langle> PublishRequest i (maxTerm (prevAccepted i t q)) (v i (maxTerm (prevAccepted i t q))) \<rangle>\<leadsto>"
                 by (intro Vote_PublishRequest_v, auto simp add: isMessage_def isMessageFrom_def)
 
-              have "lastAcceptedTermInSlot nd = Some (maxTerm (prevAccepted i t q))"
+              have "lastAcceptedTermInSlot nd = SomeTerm (maxTerm (prevAccepted i t q))"
               proof (cases "lastAcceptedTermInSlot nd")
-                case None show ?thesis
-                  using None electionValueForced_max electionValueForced_nd n'_sent n'_vote nd_def q_def won
-                  using fresh_request by fastforce
+                case NO_TERM show ?thesis
+                  using NO_TERM electionValueForced_max electionValueForced_nd n'_sent n'_vote
+                    nd_def q_def won fresh_request less_eq_TermOption_def
+                   by fastforce
               next
-                case (Some t')
+                case (SomeTerm t')
 
-                moreover from Some n''_vote n''_sent
+                moreover from SomeTerm n''_vote n''_sent
                 have "t' \<le> maxTerm (prevAccepted i t q)"
                   by (intro maxTerm_max finite_prevAccepted, auto simp add: prevAccepted_def isMessageFrom_def)
 
                 moreover from n'_vote n'_sent electionValueForced_nd won
-                have "maxTermOption (Some (maxTerm (prevAccepted i t q))) (lastAcceptedTermInSlot nd) = lastAcceptedTermInSlot nd"
+                have "SomeTerm (maxTerm (prevAccepted i t q)) \<le> lastAcceptedTermInSlot nd"
                   unfolding nd_def q_def using fresh_request
                   by (intro electionValueForced_max [where n' = n'], simp_all add: nd_def)
                 hence "maxTerm (prevAccepted i t q) \<le> t'"
-                  by (simp add: Some)
+                  by (auto simp add: SomeTerm less_eq_TermOption_def)
 
                 ultimately show ?thesis by simp
               qed
@@ -1658,10 +1658,9 @@ lemma (in zenStep) handleVote_invariants:
 proof (cases "t = currentTerm nd
              \<and> (i < firstUncommittedSlot nd
                 \<or> (i = firstUncommittedSlot nd
-                    \<and> (a = None
+                    \<and> (a = NO_TERM
                         \<or> a = lastAcceptedTermInSlot nd
-                        \<or> (maxTermOption a (lastAcceptedTermInSlot nd) = lastAcceptedTermInSlot nd
-                              \<and> electionValueForced nd))))")
+                        \<or> (a < lastAcceptedTermInSlot nd \<and> electionValueForced nd))))")
   case False
   have [simp]: "result = (nd, None)" unfolding result_def handleVote_def by (simp add: False Let_def)
   have [simp]: "messages' = messages" by (simp add: messages')
@@ -1671,7 +1670,7 @@ next
   case True
   hence True': "i \<le> firstUncommittedSlot nd"
     "t = currentTerm nd"
-    "i < firstUncommittedSlot nd \<or> (i = firstUncommittedSlot nd \<and> (a = None \<or> a = lastAcceptedTermInSlot nd \<or> (maxTermOption a (lastAcceptedTermInSlot nd) = lastAcceptedTermInSlot nd \<and> electionValueForced nd)))"
+    "i < firstUncommittedSlot nd \<or> (i = firstUncommittedSlot nd \<and> (a = NO_TERM \<or> a = lastAcceptedTermInSlot nd \<or> (a < lastAcceptedTermInSlot nd \<and> electionValueForced nd)))"
     by auto
 
   define nd1 where "nd1 \<equiv> addElectionVote s i a nd"
@@ -1685,7 +1684,7 @@ next
       fold nd_def isMessageFromTo_def)
     show "nodeState1 n\<^sub>0 = addElectionVote s i a nd" by (simp add: nodeState1_def nd1_def)
     from True' sent show "s \<midarrow>\<langle> Vote i (currentTerm nd) a \<rangle>\<rightarrow> (OneNode n\<^sub>0)" by simp
-    from True' show "i < firstUncommittedSlot nd \<or> i = firstUncommittedSlot nd \<and> (a = None \<or> a = lastAcceptedTermInSlot nd \<or> maxTermOption a (lastAcceptedTermInSlot nd) = lastAcceptedTermInSlot nd \<and> electionValueForced nd)" by simp
+    from True' show "i < firstUncommittedSlot nd \<or> i = firstUncommittedSlot nd \<and> (a = NO_TERM \<or> a = lastAcceptedTermInSlot nd \<or> a < lastAcceptedTermInSlot nd \<and> electionValueForced nd)" by simp
     show "\<And>n. n \<noteq> n\<^sub>0 \<Longrightarrow> nodeState1 n = nodeState' n" unfolding nodeState1_def nodeState'_def by simp
   qed
 
@@ -1812,16 +1811,16 @@ next
     "\<And>n. publishVotes (nodeState' n) = publishVotes (nodeState n)"
     "\<And>n. currentClusterState (nodeState' n) = currentClusterState (nodeState n)"
     "\<And>n. electionValueForced (nodeState' n) = electionValueForced (nodeState n)"
-    "lastAcceptedTerm nd' = Some t"
+    "lastAcceptedTerm nd' = SomeTerm t"
     "lastAcceptedValue nd' = x"
     "lastAcceptedSlot nd' = i"
-    "lastAcceptedTermInSlot nd' = Some t"
+    "lastAcceptedTermInSlot nd' = SomeTerm t"
     using precondition
     by (unfold nodeState'_def, auto simp add: result nd' nd_def isQuorum_def
         lastAcceptedTerm_def lastAcceptedSlot_def lastAcceptedValue_def lastAcceptedTermInSlot_def)
 
   have updated_properties:
-    "\<And>n. lastAcceptedTerm (nodeState' n) = (if n = n\<^sub>0 then Some t else lastAcceptedTerm (nodeState n))"
+    "\<And>n. lastAcceptedTerm (nodeState' n) = (if n = n\<^sub>0 then SomeTerm t else lastAcceptedTerm (nodeState n))"
     "\<And>n. lastAcceptedValue (nodeState' n) = (if n = n\<^sub>0 then x else lastAcceptedValue (nodeState n))"
     "\<And>n. lastAcceptedSlot (nodeState' n) = (if n = n\<^sub>0 then i else lastAcceptedSlot (nodeState n))"
     by (unfold nodeState'_def, auto simp add: result nd' nd_def
@@ -1854,7 +1853,7 @@ next
         lastCommittedClusterStateBefore_eq property_simps promised_eq prevAccepted_eq)
   proof -
     from finite_messages show "finite messages'" by (simp add: messages')
-    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
+    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
     from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast".
     from Vote_unique_destination show "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow> d' \<Longrightarrow> d = d'".
     from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
@@ -1862,7 +1861,7 @@ next
     from Vote_currentTerm show "\<And>n i t a. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from Vote_slot_function show "\<And>n i i' t a a'. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> n \<midarrow>\<langle> Vote i' t a' \<rangle>\<leadsto> \<Longrightarrow> i = i'".
     from electionWon_isQuorum show "\<And>n. electionWon (nodeState n) \<Longrightarrow> isQuorum (nodeState n) (joinVotes (nodeState n))".
-    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) None \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
+    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) NO_TERM \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
     from currentClusterState_lastCommittedClusterStateBefore show "\<And>n. currentClusterState (nodeState n) = lastCommittedClusterStateBefore (firstUncommittedSlot (nodeState n))".
     from joinVotes show "\<And>n n'. n' \<in> joinVotes (nodeState n) \<Longrightarrow> promised (firstUncommittedSlot (nodeState n)) n' n (currentTerm (nodeState n))".
     from PublishRequest_committedTo show "\<And>i t x. \<langle> PublishRequest i t x \<rangle>\<leadsto> \<Longrightarrow> committed\<^sub>< i".
@@ -1879,42 +1878,42 @@ next
     from Vote_future show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>'"
       using precondition unfolding PublishResponse' nd_def by (metis Vote_currentTerm Pair_inject leD)
 
-    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>'"
+    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>'"
       using precondition unfolding PublishResponse' nd_def by (metis Vote_currentTerm Pair_inject leD)
 
-    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>'"
+    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>'"
       using precondition unfolding PublishResponse' nd_def by metis
 
-    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>'"
+    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>'"
       using precondition unfolding PublishResponse' nd_def using Vote_currentTerm by fastforce
 
-    from lastAcceptedSlot_firstUncommittedSlot show "\<And>n. lastAcceptedTerm (nodeState' n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState' n) \<le> firstUncommittedSlot (nodeState n)"
+    from lastAcceptedSlot_firstUncommittedSlot show "\<And>n. lastAcceptedTerm (nodeState' n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState' n) \<le> firstUncommittedSlot (nodeState n)"
       using precondition unfolding nd_def nodeState'_def by auto
 
     fix n
 
-    from lastAcceptedSlot_PublishResponse show "\<And>i t. lastAcceptedTerm (nodeState' n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState' n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>'"
+    from lastAcceptedSlot_PublishResponse show "\<And>i t. lastAcceptedTerm (nodeState' n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState' n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>'"
       using precondition unfolding PublishResponse' nd_def nodeState'_def apply (cases "n = n\<^sub>0", auto)
       by (meson lastAcceptedSlot_PublishResponse lastAcceptedSlot_firstUncommittedSlot lastAcceptedTerm_None le_less_trans)
 
-    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState' n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>'"
+    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState' n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>'"
       using precondition property_simps unfolding PublishResponse' nd_def
-      by (metis fst_conv nd'_def nodeState_unchanged option.distinct(1))
+      by (metis fst_conv nd'_def nodeState_unchanged TermOption.distinct(1))
 
-    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState' n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState' n)) t \<rangle>\<leadsto>'"
+    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState' n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState' n)) t \<rangle>\<leadsto>'"
       using precondition property_simps unfolding PublishResponse' nd_def
-      by (metis nd'_def nodeState_unchanged option.inject)
+      by (metis nd'_def nodeState_unchanged TermOption.inject)
 
-    from lastAcceptedTerm_Some_max show "\<And>t t'. lastAcceptedTerm (nodeState' n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState' n)) t' \<rangle>\<leadsto>' \<Longrightarrow> t' \<le> t"
+    from lastAcceptedTerm_Some_max show "\<And>t t'. lastAcceptedTerm (nodeState' n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState' n)) t' \<rangle>\<leadsto>' \<Longrightarrow> t' \<le> t"
       using precondition property_simps unfolding PublishResponse' nd_def apply (cases "n = n\<^sub>0", auto)
-      apply (metis dual_order.order_iff_strict dual_order.trans lastAcceptedSlot_PublishResponse lastAcceptedSlot_firstUncommittedSlot lastAcceptedTerm_None lastAcceptedTerm_Some_currentTerm nd'_def not_None_eq option.inject property_simps(12) property_simps(14))
-      using nd'_def `lastAcceptedTerm nd' = Some t` nodeState_unchanged by auto
+      apply (metis TermOption.exhaust TermOption.inject lastAcceptedSlot_PublishResponse lastAcceptedSlot_firstUncommittedSlot lastAcceptedTerm_None lastAcceptedTerm_Some_currentTerm le_neq_implies_less le_trans nd'_def nd_def precondition property_simps(12) property_simps(14))
+      using nd'_def `lastAcceptedTerm nd' = SomeTerm t` nodeState_unchanged by auto
 
     from electionValueForced_Vote show "\<And>n. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> \<exists>n'\<in>joinVotes (nodeState n). n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) (lastAcceptedTermInSlot (nodeState' n)) \<rangle>\<rightarrow> (OneNode n)"
       using precondition property_simps unfolding PublishResponse' nd_def
       by (metis isMessage_def nodeState_unchanged sent)
 
-    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState' n)) = lastAcceptedTermInSlot (nodeState' n)"
+    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState' n)"
       using precondition property_simps unfolding PublishResponse' nd_def
       by (metis isMessage_def nodeState_unchanged sent)
 
@@ -1930,13 +1929,13 @@ next
       using precondition property_simps unfolding PublishResponse' nd_def
       by meson
 
-    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState' n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState' n)) t (lastAcceptedValue (nodeState' n)) \<rangle>\<leadsto>"
+    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState' n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState' n)) t (lastAcceptedValue (nodeState' n)) \<rangle>\<leadsto>"
       using precondition property_simps unfolding PublishResponse' nd_def
-      by (metis isMessage_def nd'_def nodeState_unchanged option.inject sent)
+      by (metis isMessage_def nd'_def nodeState_unchanged TermOption.inject sent)
 
-    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState' n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState n)"
+    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState' n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState n)"
       using precondition property_simps unfolding PublishResponse' nd_def
-      by (metis eq_imp_le option.inject updated_properties(1))
+      by (metis eq_imp_le TermOption.inject updated_properties(1))
   qed
 qed
 
@@ -1993,25 +1992,25 @@ proof -
   proof -
     from finite_messages show "finite messages'" by (simp add: messages')
     from Vote_future show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>".
-    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
-    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
+    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
+    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
     from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast".
     from Vote_unique_destination show "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow> d' \<Longrightarrow> d = d'".
     from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
     from committedTo_firstUncommittedSlot show "\<And>n. committed\<^sub>< (firstUncommittedSlot (nodeState n))" .
-    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
-    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
-    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
+    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
+    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
+    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
     from Vote_currentTerm show "\<And>n i t a. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from Vote_slot_function show "\<And>n i i' t a a'. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> n \<midarrow>\<langle> Vote i' t a' \<rangle>\<leadsto> \<Longrightarrow> i = i'".
     from electionWon_isQuorum show "\<And>n. electionWon (nodeState n) \<Longrightarrow> isQuorum (nodeState n) (joinVotes (nodeState n))".
-    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) None \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
+    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) NO_TERM \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
     from electionValueForced_Vote show "\<And>n. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> \<exists>n'\<in>joinVotes (nodeState n). n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) (lastAcceptedTermInSlot (nodeState n)) \<rangle>\<rightarrow> (OneNode n)".
-    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState n)) = lastAcceptedTermInSlot (nodeState n)".
+    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState n)".
     from currentClusterState_lastCommittedClusterStateBefore show "\<And>n. currentClusterState (nodeState n) = lastCommittedClusterStateBefore (firstUncommittedSlot (nodeState n))".
     from joinVotes show "\<And>n n'. n' \<in> joinVotes (nodeState n) \<Longrightarrow> promised (firstUncommittedSlot (nodeState n)) n' n (currentTerm (nodeState n))".
     from PublishRequest_committedTo show "\<And>i t x. \<langle> PublishRequest i t x \<rangle>\<leadsto> \<Longrightarrow> committed\<^sub>< i".
@@ -2021,13 +2020,13 @@ proof -
     from ApplyCommit_quorum show "\<And>i t. \<langle> ApplyCommit i t \<rangle>\<leadsto> \<Longrightarrow> \<exists>q\<in>majorities (V i). \<forall>s\<in>q. s \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
     from currentVotingNodes_firstUncommittedSlot show "\<And>n. currentVotingNodes (nodeState n) = V (firstUncommittedSlot (nodeState n))".
     from firstUncommittedSlot_PublishRequest show "\<And>i n t x. firstUncommittedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishRequest i t x \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
     from PublishRequest_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from PublishRequest_publishPermitted_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> publishPermitted (nodeState n) \<Longrightarrow> t < currentTerm (nodeState n)".
     from CatchUpResponse_committedTo show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> committed\<^sub>< i".
     from CatchUpResponse_V show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> V i = conf".
     from CatchUpResponse_lastCommittedClusterStateBefore show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> lastCommittedClusterStateBefore i = cs".
-    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
+    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
 
     from publishVotes show "\<And>n n'. n' \<in> publishVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> PublishResponse (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) \<rangle>\<leadsto>"
       unfolding updated_properties using sent apply auto by (metis empty_iff nd_def singleton_iff)
@@ -2190,24 +2189,24 @@ next
   proof -
     from finite_messages show "finite messages'" by (simp add: messages')
     from Vote_future show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>".
-    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
-    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
+    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
+    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
     from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast".
     from Vote_unique_destination show "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow> d' \<Longrightarrow> d = d'".
     from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
-    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
-    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
-    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
+    from lastAcceptedSlot_firstUncommittedSlot  show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
+    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
+    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
     from Vote_currentTerm show "\<And>n i t a. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from Vote_slot_function show "\<And>n i i' t a a'. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> n \<midarrow>\<langle> Vote i' t a' \<rangle>\<leadsto> \<Longrightarrow> i = i'".
     from electionWon_isQuorum show "\<And>n. electionWon (nodeState n) \<Longrightarrow> isQuorum (nodeState n) (joinVotes (nodeState n))".
-    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) None \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
+    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) NO_TERM \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
     from electionValueForced_Vote show "\<And>n. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> \<exists>n'\<in>joinVotes (nodeState n). n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) (lastAcceptedTermInSlot (nodeState n)) \<rangle>\<rightarrow> (OneNode n)".
-    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState n)) = lastAcceptedTermInSlot (nodeState n)".
+    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState n)".
     from publishVotes show "\<And>n n'. n' \<in> publishVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> PublishResponse (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) \<rangle>\<leadsto>".
     from currentClusterState_lastCommittedClusterStateBefore show "\<And>n. currentClusterState (nodeState n) = lastCommittedClusterStateBefore (firstUncommittedSlot (nodeState n))".
     from joinVotes show "\<And>n n'. n' \<in> joinVotes (nodeState n) \<Longrightarrow> promised (firstUncommittedSlot (nodeState n)) n' n (currentTerm (nodeState n))".
@@ -2215,10 +2214,10 @@ next
     from PublishResponse_PublishRequest show "\<And>i s t. s \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto> \<Longrightarrow> \<exists>x. \<langle> PublishRequest i t x \<rangle>\<leadsto>".
     from currentVotingNodes_firstUncommittedSlot show "\<And>n. currentVotingNodes (nodeState n) = V (firstUncommittedSlot (nodeState n))".
     from firstUncommittedSlot_PublishRequest show "\<And>i n t x. firstUncommittedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishRequest i t x \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
     from PublishRequest_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from PublishRequest_publishPermitted_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> publishPermitted (nodeState n) \<Longrightarrow> t < currentTerm (nodeState n)".
-    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
+    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
 
     {
       fix i conf cs assume a: "\<langle> CatchUpResponse i conf cs \<rangle>\<leadsto>"
@@ -2307,7 +2306,7 @@ lemma (in zenStep) handleApplyCommit_invariants:
   assumes messages'[simp]: "messages' = messages"
   assumes sent: "\<langle> ApplyCommit i t \<rangle>\<leadsto>"
   shows "zen messages' nodeState'"
-proof (cases "i = firstUncommittedSlot nd \<and> lastAcceptedTermInSlot nd = Some t")
+proof (cases "i = firstUncommittedSlot nd \<and> lastAcceptedTermInSlot nd = SomeTerm t")
   case False
   hence nd'[simp]: "nd' = nd"
     by (auto simp add: nd' handleApplyCommit_def)
@@ -2319,7 +2318,7 @@ proof (cases "i = firstUncommittedSlot nd \<and> lastAcceptedTermInSlot nd = Som
 next
   case True
   hence i: "i = firstUncommittedSlot nd"
-    and t: "lastAcceptedTermInSlot nd = Some t" by simp_all
+    and t: "lastAcceptedTermInSlot nd = SomeTerm t" by simp_all
 
   from t have "lastAcceptedSlot nd = firstUncommittedSlot nd \<and> lastAcceptedTerm nd = lastAcceptedTermInSlot nd"
     unfolding lastAcceptedTermInSlot_def by (cases "firstUncommittedSlot nd = lastAcceptedSlot nd", auto)
@@ -2410,7 +2409,7 @@ next
       "\<And>n. electionValueForced (nodeState' n) = (electionValueForced (nodeState n) \<and> n \<noteq> n\<^sub>0)"
       by simp_all
 
-    have "\<And>n. lastAcceptedTermInSlot (nodeState' n) = (if n = n\<^sub>0 then None else lastAcceptedTermInSlot (nodeState n))"
+    have "\<And>n. lastAcceptedTermInSlot (nodeState' n) = (if n = n\<^sub>0 then NO_TERM else lastAcceptedTermInSlot (nodeState n))"
       unfolding lastAcceptedTermInSlot_def updated_properties property_simps by auto
     note updated_properties = updated_properties this
 
@@ -2421,10 +2420,10 @@ next
     proof -
       from finite_messages show "finite messages" .
       from Vote_future show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>".
-      from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-      from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
-      from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-      from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
+      from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+      from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
+      from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+      from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
       from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast".
       from Vote_unique_destination show "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow> d' \<Longrightarrow> d = d'".
       from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
@@ -2439,12 +2438,12 @@ next
       from CatchUpResponse_committedTo show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> committed\<^sub>< i".
       from CatchUpResponse_V show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> V i = conf".
       from CatchUpResponse_lastCommittedClusterStateBefore show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> lastCommittedClusterStateBefore i = cs".
-      from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-      from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-      from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
-      from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
-      from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
-      from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
+      from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+      from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+      from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
+      from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
+      from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
+      from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
 
       fix n
 
@@ -2452,17 +2451,17 @@ next
         unfolding updated_properties committedTo_def apply (cases "n = n\<^sub>0", auto)
         using i isCommitted_def less_antisym nd_def sent by blast
 
-      from lastAcceptedSlot_firstUncommittedSlot show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState' n)"
+      from lastAcceptedSlot_firstUncommittedSlot show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState' n)"
         unfolding updated_properties by auto
 
-      from electionValueFree_Vote show "\<And>n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) None \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState' n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))"
+      from electionValueFree_Vote show "\<And>n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) NO_TERM \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState' n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))"
         unfolding updated_properties apply (cases "n = n\<^sub>0", auto)
         by (meson isMessageFromTo_def le_less_trans lessI zen.joinVotes zen_axioms)
 
       from electionValueForced_Vote show "electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> \<exists>n'\<in>joinVotes (nodeState n). n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) (lastAcceptedTermInSlot (nodeState' n)) \<rangle>\<rightarrow> (OneNode n)"
         unfolding updated_properties apply (cases "n = n\<^sub>0", auto) done
 
-      from electionValueForced_max show "\<And>n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState' n)) = lastAcceptedTermInSlot (nodeState' n)"
+      from electionValueForced_max show "\<And>n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState' n)"
         unfolding updated_properties apply (cases "n = n\<^sub>0", auto) done
 
       from publishVotes show "\<And>n'. n' \<in> publishVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> PublishResponse (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) \<rangle>\<leadsto>"
@@ -2539,7 +2538,7 @@ next
       unfolding nodeState'_def using i t lastAcceptedValue_eq
       by (auto simp add: nd' handleApplyCommit_def applyAcceptedValue_def nd_def isQuorum_def)
 
-    have "\<And>n. lastAcceptedTermInSlot (nodeState' n) = (if n = n\<^sub>0 then None else lastAcceptedTermInSlot (nodeState n))"
+    have "\<And>n. lastAcceptedTermInSlot (nodeState' n) = (if n = n\<^sub>0 then NO_TERM else lastAcceptedTermInSlot (nodeState n))"
       unfolding lastAcceptedTermInSlot_def updated_properties property_simps by auto
     note updated_properties = updated_properties this
 
@@ -2550,10 +2549,10 @@ next
     proof -
       from finite_messages show "finite messages" .
       from Vote_future show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>".
-      from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-      from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
-      from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-      from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
+      from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+      from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
+      from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+      from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
       from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast".
       from Vote_unique_destination show "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow> d' \<Longrightarrow> d = d'".
       from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
@@ -2567,11 +2566,11 @@ next
       from CatchUpResponse_committedTo show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> committed\<^sub>< i".
       from CatchUpResponse_V show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> V i = conf".
       from CatchUpResponse_lastCommittedClusterStateBefore show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> lastCommittedClusterStateBefore i = cs".
-      from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-      from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
-      from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
-      from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
+      from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+      from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
+      from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
+      from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
 
       fix n
 
@@ -2579,20 +2578,20 @@ next
         unfolding updated_properties committedTo_def apply (cases "n = n\<^sub>0", auto)
         using i isCommitted_def less_antisym nd_def sent by blast
 
-      from lastAcceptedSlot_firstUncommittedSlot show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState' n)"
+      from lastAcceptedSlot_firstUncommittedSlot show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState' n)"
         unfolding updated_properties by auto
 
       from electionWon_isQuorum show "\<And>n. electionWon (nodeState' n) \<Longrightarrow> isQuorum (nodeState' n) (joinVotes (nodeState n))"
         unfolding updated_properties apply (cases "n = n\<^sub>0", auto simp add: nd_def) done
 
-      from electionValueFree_Vote show "\<And>n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) None \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState' n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))"
+      from electionValueFree_Vote show "\<And>n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) NO_TERM \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState' n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))"
         unfolding updated_properties apply (cases "n = n\<^sub>0", auto)
         by (meson isMessageFromTo_def le_imp_less_Suc zen.joinVotes zen_axioms)
 
       from electionValueForced_Vote show "electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> \<exists>n'\<in>joinVotes (nodeState n). n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) (lastAcceptedTermInSlot (nodeState' n)) \<rangle>\<rightarrow> (OneNode n)"
         unfolding updated_properties apply (cases "n = n\<^sub>0", auto) done
 
-      from electionValueForced_max show "\<And>n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState' n)) = lastAcceptedTermInSlot (nodeState' n)"
+      from electionValueForced_max show "\<And>n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState' n)"
         unfolding updated_properties apply (cases "n = n\<^sub>0", auto) done
 
       from publishVotes show "\<And>n'. n' \<in> publishVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> PublishResponse (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) \<rangle>\<leadsto>"
@@ -2618,7 +2617,7 @@ next
       from currentVotingNodes_firstUncommittedSlot show "\<And>n. currentVotingNodes (nodeState' n) = V (firstUncommittedSlot (nodeState' n))"
         unfolding updated_properties committedTo_def using Reconfigure i nd_def by (cases "n = n\<^sub>0", auto)
 
-      from lastAcceptedTerm_Some_currentTerm show "\<And>t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState n)"
+      from lastAcceptedTerm_Some_currentTerm show "\<And>t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState n)"
         unfolding updated_properties apply (cases "n = n\<^sub>0", auto) done
     qed
   qed
@@ -2690,25 +2689,25 @@ proof -
   proof -
     from finite_messages show "finite messages'" by (simp add: messages')
     from Vote_future show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>".
-    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
-    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
+    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
+    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
     from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast".
     from Vote_unique_destination show "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow> d' \<Longrightarrow> d = d'".
     from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
     from committedTo_firstUncommittedSlot show "\<And>n. committed\<^sub>< (firstUncommittedSlot (nodeState n))" .
-    from lastAcceptedSlot_firstUncommittedSlot show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
-    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
-    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
+    from lastAcceptedSlot_firstUncommittedSlot show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)".
+    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
+    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
     from Vote_currentTerm show "\<And>n i t a. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from Vote_slot_function show "\<And>n i i' t a a'. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> n \<midarrow>\<langle> Vote i' t a' \<rangle>\<leadsto> \<Longrightarrow> i = i'".
     from electionWon_isQuorum show "\<And>n. electionWon (nodeState n) \<Longrightarrow> isQuorum (nodeState n) (joinVotes (nodeState n))".
-    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) None \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
+    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState n) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) NO_TERM \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))".
     from electionValueForced_Vote show "\<And>n. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> \<exists>n'\<in>joinVotes (nodeState n). n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) (lastAcceptedTermInSlot (nodeState n)) \<rangle>\<rightarrow> (OneNode n)".
-    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState n)) = lastAcceptedTermInSlot (nodeState n)".
+    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState n)".
     from publishVotes show "\<And>n n'. n' \<in> publishVotes (nodeState n) \<Longrightarrow> n' \<midarrow>\<langle> PublishResponse (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) \<rangle>\<leadsto>".
     from currentClusterState_lastCommittedClusterStateBefore show "\<And>n. currentClusterState (nodeState n) = lastCommittedClusterStateBefore (firstUncommittedSlot (nodeState n))".
     from joinVotes show "\<And>n n'. n' \<in> joinVotes (nodeState n) \<Longrightarrow> promised (firstUncommittedSlot (nodeState n)) n' n (currentTerm (nodeState n))".
@@ -2719,10 +2718,10 @@ proof -
     from ApplyCommit_quorum show "\<And>i t. \<langle> ApplyCommit i t \<rangle>\<leadsto> \<Longrightarrow> \<exists>q\<in>majorities (V i). \<forall>s\<in>q. s \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
     from currentVotingNodes_firstUncommittedSlot show "\<And>n. currentVotingNodes (nodeState n) = V (firstUncommittedSlot (nodeState n))".
     from firstUncommittedSlot_PublishRequest show "\<And>i n t x. firstUncommittedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishRequest i t x \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
     from PublishRequest_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from PublishRequest_publishPermitted_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> publishPermitted (nodeState n) \<Longrightarrow> t < currentTerm (nodeState n)".
-    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
+    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
 
     from CatchUpResponse_committedTo committedTo_firstUncommittedSlot
     show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto>' \<Longrightarrow> committed\<^sub>< i"
@@ -2806,7 +2805,7 @@ next
     unfolding nodeState'_def
     by (auto simp add: nd' nd_def isQuorum_def)
 
-  have "\<And>n. lastAcceptedTermInSlot (nodeState' n) = (if n = n\<^sub>0 then None else lastAcceptedTermInSlot (nodeState n))"
+  have "\<And>n. lastAcceptedTermInSlot (nodeState' n) = (if n = n\<^sub>0 then NO_TERM else lastAcceptedTermInSlot (nodeState n))"
     using True unfolding lastAcceptedTermInSlot_def updated_properties property_simps nd_def
     using lastAcceptedSlot_firstUncommittedSlot not_le by fastforce
   note updated_properties = updated_properties this
@@ -2818,10 +2817,10 @@ next
   proof -
     from finite_messages show "finite messages" .
     from Vote_future show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>".
-    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
-    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
+    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
+    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
     from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast".
     from Vote_unique_destination show "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow> d' \<Longrightarrow> d = d'".
     from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
@@ -2835,14 +2834,14 @@ next
     from CatchUpResponse_committedTo show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> committed\<^sub>< i".
     from CatchUpResponse_V show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> V i = conf".
     from CatchUpResponse_lastCommittedClusterStateBefore show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> lastCommittedClusterStateBefore i = cs".
-    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
-    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
-    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
+    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>".
+    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t".
+    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
 
-    from lastAcceptedSlot_firstUncommittedSlot show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState' n)"
+    from lastAcceptedSlot_firstUncommittedSlot show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState' n)"
       using True unfolding updated_properties nd_def by force
 
     from committedTo_firstUncommittedSlot show "\<And>n. committed\<^sub>< (firstUncommittedSlot (nodeState' n))"
@@ -2852,13 +2851,13 @@ next
     from electionWon_isQuorum show "\<And>n. electionWon (nodeState' n) \<Longrightarrow> isQuorum (nodeState' n) (joinVotes (nodeState' n))"
       unfolding updated_properties apply auto done
 
-    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) None \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState' n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))"
+    from electionValueFree_Vote show "\<And>n n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) NO_TERM \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState' n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))"
       unfolding updated_properties apply auto by blast
 
     from electionValueForced_Vote show "\<And>n. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> \<exists>n'\<in>joinVotes (nodeState' n). n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) (lastAcceptedTermInSlot (nodeState' n)) \<rangle>\<rightarrow> (OneNode n)"
       unfolding updated_properties apply auto done
 
-    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState' n)) = lastAcceptedTermInSlot (nodeState' n)"
+    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState' n)"
       unfolding updated_properties apply auto done
 
     from publishVotes show "\<And>n n'. n' \<in> publishVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> PublishResponse (firstUncommittedSlot (nodeState' n)) (currentTerm (nodeState n)) \<rangle>\<leadsto>"
@@ -2940,20 +2939,20 @@ proof -
   proof -
     from finite_messages show "finite messages'" by (simp add: messages')
     from Vote_future show "\<And>i i' s t t' a. s \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> i < i' \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i' t' \<rangle>\<leadsto>".
-    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t None \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
-    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
-    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (Some t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
+    from Vote_None show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t NO_TERM \<rangle>\<leadsto> \<Longrightarrow> t' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_lt show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t".
+    from Vote_Some_PublishResponse show "\<And>i s t t'. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> s \<midarrow>\<langle> PublishResponse i t' \<rangle>\<leadsto>".
+    from Vote_Some_max show "\<And>i s t t' t''. s \<midarrow>\<langle> Vote i t (SomeTerm t') \<rangle>\<leadsto> \<Longrightarrow> t' < t'' \<Longrightarrow> t'' < t \<Longrightarrow> \<not> s \<midarrow>\<langle> PublishResponse i t'' \<rangle>\<leadsto>".
     from Vote_not_broadcast show "\<And>i t a d. \<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> d \<noteq> Broadcast".
     from Vote_unique_destination show "\<And>i' i s t a a' d d'. s \<midarrow>\<langle> Vote i t a \<rangle>\<rightarrow> d \<Longrightarrow> s \<midarrow>\<langle> Vote i' t a' \<rangle>\<rightarrow> d' \<Longrightarrow> d = d'".
     from currentNode_nodeState show "\<And>n. currentNode (nodeState n) = n" .
     from committedTo_firstUncommittedSlot show "\<And>n. committed\<^sub>< (firstUncommittedSlot (nodeState n))" .
-    from lastAcceptedSlot_firstUncommittedSlot show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)" .
-    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> None \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
-    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = None \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
-    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>" .
-    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t" .
-    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>" .
+    from lastAcceptedSlot_firstUncommittedSlot show "\<And>n. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) \<le> firstUncommittedSlot (nodeState n)" .
+    from lastAcceptedSlot_PublishResponse show "\<And>n i t. lastAcceptedTerm (nodeState n) \<noteq> NO_TERM \<Longrightarrow> lastAcceptedSlot (nodeState n) < i \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>" .
+    from lastAcceptedTerm_None show "\<And>n i t. lastAcceptedTerm (nodeState n) = NO_TERM \<Longrightarrow> \<not> n \<midarrow>\<langle> PublishResponse i t \<rangle>\<leadsto>".
+    from lastAcceptedTerm_Some_sent show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t \<rangle>\<leadsto>" .
+    from lastAcceptedTerm_Some_max show "\<And>n t t'. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> n \<midarrow>\<langle> PublishResponse (lastAcceptedSlot (nodeState n)) t' \<rangle>\<leadsto> \<Longrightarrow> t' \<le> t" .
+    from lastAcceptedTerm_Some_value show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> \<langle> PublishRequest (lastAcceptedSlot (nodeState n)) t (lastAcceptedValue (nodeState n)) \<rangle>\<leadsto>" .
     from Vote_currentTerm show "\<And>n i t a. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> t \<le> currentTerm (nodeState n)".
     from Vote_slot_function show "\<And>n i i' t a a'. n \<midarrow>\<langle> Vote i t a \<rangle>\<leadsto> \<Longrightarrow> n \<midarrow>\<langle> Vote i' t a' \<rangle>\<leadsto> \<Longrightarrow> i = i'".
     from currentClusterState_lastCommittedClusterStateBefore show "\<And>n. currentClusterState (nodeState n) = lastCommittedClusterStateBefore (firstUncommittedSlot (nodeState n))".
@@ -2968,20 +2967,20 @@ proof -
     from CatchUpResponse_committedTo show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> committed\<^sub>< i".
     from CatchUpResponse_V show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> V i = conf".
     from CatchUpResponse_lastCommittedClusterStateBefore show "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> lastCommittedClusterStateBefore i = cs".
-    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = Some t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
+    from lastAcceptedTerm_Some_currentTerm show "\<And>n t. lastAcceptedTerm (nodeState n) = SomeTerm t \<Longrightarrow> t \<le> currentTerm (nodeState n)".
 
     from electionWon_isQuorum show "\<And>n. electionWon (nodeState' n) \<Longrightarrow> isQuorum (nodeState n) (joinVotes (nodeState' n))"
       unfolding updated_properties by simp
     from electionValueForced_Vote show "\<And>n. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> \<exists>n'\<in>joinVotes (nodeState' n). n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) (lastAcceptedTermInSlot (nodeState n)) \<rangle>\<rightarrow> (OneNode n)"
       unfolding updated_properties by simp
-    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> maxTermOption a' (lastAcceptedTermInSlot (nodeState n)) = lastAcceptedTermInSlot (nodeState n)"
+    from electionValueForced_max show " \<And>n n' a'. electionValueForced (nodeState' n) \<Longrightarrow> \<not> (\<exists>x. \<langle> PublishRequest (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) x \<rangle>\<leadsto>) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) a' \<rangle>\<rightarrow> (OneNode n) \<Longrightarrow> a' \<le> lastAcceptedTermInSlot (nodeState n)"
       unfolding updated_properties by simp
     from PublishRequest_publishPermitted_currentTerm show "\<And>n t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState n)) t x \<rangle>\<leadsto> \<Longrightarrow> publishPermitted (nodeState' n) \<Longrightarrow> t < currentTerm (nodeState n)"
       unfolding updated_properties by simp
 
     fix n
 
-    from electionValueFree_Vote show "\<And>n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) None \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))"
+    from electionValueFree_Vote show "\<And>n'. \<not> electionValueForced (nodeState' n) \<Longrightarrow> n' \<in> joinVotes (nodeState' n) \<Longrightarrow> n' \<midarrow>\<langle> Vote (firstUncommittedSlot (nodeState n)) (currentTerm (nodeState n)) NO_TERM \<rangle>\<rightarrow> (OneNode n) \<or> (\<exists>i<firstUncommittedSlot (nodeState n). \<exists>a. n' \<midarrow>\<langle> Vote i (currentTerm (nodeState n)) a \<rangle>\<rightarrow> (OneNode n))"
       unfolding updated_properties by (cases "n = n\<^sub>0", simp_all)
     from joinVotes show "\<And>n'. n' \<in> joinVotes (nodeState' n) \<Longrightarrow> promised (firstUncommittedSlot (nodeState n)) n' n (currentTerm (nodeState n))"
       unfolding updated_properties by (cases "n = n\<^sub>0", simp_all)
