@@ -53,7 +53,6 @@ VARIABLE lastAcceptedTerm
 VARIABLE lastAcceptedValue
 VARIABLE joinVotes
 VARIABLE electionWon
-VARIABLE electionValueForced
 VARIABLE publishPermitted
 
 ----
@@ -80,7 +79,6 @@ Init == /\ messages = {}
         /\ lastAcceptedValue = [n \in Nodes |-> Nil]
         /\ joinVotes = [n \in Nodes |-> {}]
         /\ electionWon = [n \in Nodes |-> FALSE]
-        /\ electionValueForced = [n \in Nodes |-> FALSE]
         /\ publishPermitted = [n \in Nodes |-> FALSE]
 
 LastAcceptedTermInSlot(n) ==
@@ -100,7 +98,6 @@ HandleStartJoin(n, nm, t) ==
        /\ currentTerm' = [currentTerm EXCEPT ![n] = t]
        /\ publishPermitted' = [publishPermitted EXCEPT ![n] = TRUE]
        /\ electionWon' = [electionWon EXCEPT ![n] = FALSE]
-       /\ electionValueForced' = [electionValueForced EXCEPT ![n] = FALSE]
        /\ joinVotes' = [joinVotes EXCEPT ![n] = {}]
        /\ messages' = messages \cup { joinRequest }
        /\ UNCHANGED <<currentClusterState, currentConfiguration, firstUncommittedSlot,
@@ -113,17 +110,10 @@ HandleJoinRequest(n, m, rcvrs) ==
   /\ m.term = currentTerm[n]
   /\ \/ /\ m.slot < firstUncommittedSlot[n]
      \/ /\ m.slot = firstUncommittedSlot[n]
-        /\ \/ m.laTerm = Nil
-           \/ m.laTerm = LastAcceptedTermInSlot(n)
-           \/ /\ m.laTerm /= Nil
-              /\ LastAcceptedTermInSlot(n) /= Nil
-              /\ m.laTerm <= LastAcceptedTermInSlot(n)
-              /\ electionValueForced[n]
+        /\ (m.laTerm /= Nil => LastAcceptedTermInSlot(n) /= Nil /\ m.laTerm <= LastAcceptedTermInSlot(n))
   /\ joinVotes' = [joinVotes EXCEPT ![n] = @ \cup { m.source }]
-  /\ electionValueForced' = [electionValueForced EXCEPT ![n] = 
-                               @ \/ (m.laTerm /= Nil /\ m.slot = firstUncommittedSlot[n])]
   /\ electionWon' = [electionWon EXCEPT ![n] = IsQuorum(joinVotes'[n], currentConfiguration[n])]
-  /\ IF electionValueForced'[n] /\ electionWon'[n] /\ \lnot electionWon[n]
+  /\ IF electionWon'[n] /\ publishPermitted[n] /\ LastAcceptedTermInSlot(n) /= Nil 
      THEN LET publishRequests == { [method  |-> PublishRequest,
                                     source  |-> n,
                                     dest    |-> ns,
@@ -143,7 +133,6 @@ HandleJoinRequest(n, m, rcvrs) ==
 ClientRequest(n, v, rcvrs) ==
   /\ electionWon[n]
   /\ publishPermitted[n]
-  /\ electionValueForced[n] = FALSE
   /\ LET
        publishRequests == { [method  |-> PublishRequest,
                              source  |-> n,
@@ -157,14 +146,13 @@ ClientRequest(n, v, rcvrs) ==
        /\ publishPermitted' = [publishPermitted EXCEPT ![n] = FALSE]
        /\ messages' = messages \cup publishRequests
        /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, electionWon, 
-                      electionValueForced, firstUncommittedSlot, lastAcceptedValue, 
+                      firstUncommittedSlot, lastAcceptedValue, 
                       lastAcceptedSlot, lastAcceptedTerm, joinVotes>>
 
 \* change the set of voters
 ChangeVoters(n, vs, rcvrs) ==
   /\ electionWon[n]
   /\ publishPermitted[n]
-  /\ electionValueForced[n] = FALSE
   /\ LET
        publishRequests == { [method  |-> PublishRequest,
                              source  |-> n,
@@ -175,7 +163,7 @@ ChangeVoters(n, vs, rcvrs) ==
      IN
        /\ publishPermitted' = [publishPermitted EXCEPT ![n] = FALSE]
        /\ messages' = messages \cup publishRequests
-       /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, electionValueForced,
+       /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm,
                       electionWon, firstUncommittedSlot, lastAcceptedValue, lastAcceptedTerm, 
                       lastAcceptedSlot, joinVotes>>
 
@@ -196,7 +184,7 @@ HandlePublishRequest(n, m) ==
                     slot    |-> m.slot]
      IN
        /\ messages' = (messages \ {m}) \cup {response}
-       /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, electionValueForced,
+       /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm,
                       electionWon, firstUncommittedSlot, publishPermitted, joinVotes>>
 
 \* node n commits a change
@@ -218,7 +206,7 @@ CommitState(n, rcvrs) ==
     /\ IsQuorum(successNodes, currentConfiguration[n])
     /\ messages' = (messages \ publishResponses) \cup commitRequests
     /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, electionWon,
-                   electionValueForced, firstUncommittedSlot, lastAcceptedValue,
+                   firstUncommittedSlot, lastAcceptedValue,
                    lastAcceptedSlot, lastAcceptedTerm, publishPermitted, joinVotes>>
 
 \* apply committed change to node n
@@ -228,7 +216,6 @@ HandleCommitRequest(n, m) ==
   /\ m.term = LastAcceptedTermInSlot(n) 
   /\ firstUncommittedSlot' = [firstUncommittedSlot EXCEPT ![n] = @ + 1]
   /\ publishPermitted' = [publishPermitted EXCEPT ![n] = TRUE]
-  /\ electionValueForced' = [electionValueForced EXCEPT ![n] = FALSE]
   /\ IF lastAcceptedValue[n].type = Reconfigure THEN
        /\ currentConfiguration' = [currentConfiguration EXCEPT ![n] = lastAcceptedValue[n].val]
        /\ electionWon' = [electionWon EXCEPT ![n] = IsQuorum(joinVotes[n], currentConfiguration'[n])]
@@ -250,7 +237,7 @@ SendCatchupResponse(n) ==
                           state   |-> currentClusterState[n]]
      IN
        /\ messages' = messages \cup { catchupMessage }
-       /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, electionValueForced, 
+       /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, 
                       lastAcceptedValue, electionWon, firstUncommittedSlot, publishPermitted,
                       joinVotes, lastAcceptedTerm, lastAcceptedSlot>>
 
@@ -261,7 +248,6 @@ HandleCatchupResponse(n, m) ==
   /\ firstUncommittedSlot' = [firstUncommittedSlot EXCEPT ![n] = m.slot]
   /\ publishPermitted' = [publishPermitted EXCEPT ![n] = FALSE]
   /\ electionWon' = [electionWon EXCEPT ![n] = FALSE]
-  /\ electionValueForced' = [electionValueForced EXCEPT ![n] = FALSE]
   /\ currentConfiguration' = [currentConfiguration EXCEPT ![n] = m.config]
   /\ currentClusterState' = [currentClusterState EXCEPT ![n] = m.state]
   /\ joinVotes' = [joinVotes EXCEPT ![n] = {}]
@@ -272,7 +258,7 @@ HandleCatchupResponse(n, m) ==
 DropMessage(m) ==
   /\ messages' = messages \ {m}
   /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, electionWon,
-                 electionValueForced, firstUncommittedSlot, lastAcceptedValue,
+                 firstUncommittedSlot, lastAcceptedValue,
                  lastAcceptedSlot, lastAcceptedTerm, publishPermitted, joinVotes>>
 
 \* crash/restart node n (loses ephemeral state)
@@ -280,7 +266,6 @@ RestartNode(n) ==
   /\ electionWon' = [electionWon EXCEPT ![n] = FALSE]
   /\ publishPermitted' = [publishPermitted EXCEPT ![n] = FALSE]
   /\ joinVotes' = [joinVotes EXCEPT ![n] = {}]
-  /\ electionValueForced' = [electionValueForced EXCEPT ![n] = FALSE]
   /\ UNCHANGED <<messages, firstUncommittedSlot, currentTerm, currentConfiguration, 
                  currentClusterState, lastAcceptedSlot, lastAcceptedTerm, lastAcceptedValue>>
 
