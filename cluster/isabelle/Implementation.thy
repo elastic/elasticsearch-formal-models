@@ -284,7 +284,7 @@ definition handleCatchUpResponse :: "Slot \<Rightarrow> Node set \<Rightarrow> C
     "handleCatchUpResponse i conf cs nd \<equiv>
       if firstUncommittedSlot nd < i
         then nd \<lparr> firstUncommittedSlot := i
-                , publishPermitted := False
+                , publishPermitted := True
                 , publishVotes := {}
                 , currentVotingNodes := conf
                 , currentClusterState := cs
@@ -365,5 +365,10 @@ definition initialNodeState :: "Node \<Rightarrow> NodeData"
       , electionWon = False
       , publishPermitted = False
       , publishVotes = {} \<rparr>"
+(* Note: publishPermitted could be True initially, but in the actual implementation we call the
+same constructor whether we're starting up from afresh or recovering from a reboot, and the value
+is really unimportant as we need to run an election in a new term before becoming master anyway,
+so it's hard to justify putting any effort into calculating different values for these two cases.
+Instead just set it to False initially.*)
 
 end

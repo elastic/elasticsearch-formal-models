@@ -360,7 +360,7 @@ definition applyCatchup :: "Slot \<Rightarrow> Node set \<Rightarrow> ClusterSta
       setElectionWon False;
 
       setPublishVotes {};
-      setPublishPermitted False
+      setPublishPermitted True
     }"
 
 definition doClientValue :: "Value \<Rightarrow> unit Action"
