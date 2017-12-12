@@ -284,7 +284,7 @@ definition handleCatchUpResponse :: "Slot \<Rightarrow> Node set \<Rightarrow> C
     "handleCatchUpResponse i conf cs nd \<equiv>
       if firstUncommittedSlot nd < i
         then nd \<lparr> firstUncommittedSlot := i
-                , publishPermitted := False
+                , publishPermitted := True
                 , publishVotes := {}
                 , currentVotingNodes := conf
                 , currentClusterState := cs
@@ -363,7 +363,7 @@ definition initialNodeState :: "Node \<Rightarrow> NodeData"
       , lastAcceptedData = None
       , joinVotes = {}
       , electionWon = False
-      , publishPermitted = False
+      , publishPermitted = True
       , publishVotes = {} \<rparr>"
 
 end

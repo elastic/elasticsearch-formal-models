@@ -2675,7 +2675,7 @@ next
   case True
 
   hence nd': "nd' = nd \<lparr> firstUncommittedSlot := i
-                , publishPermitted := False
+                , publishPermitted := True
                 , publishVotes := {}
                 , currentVotingNodes := conf
                 , currentClusterState := cs
@@ -2709,7 +2709,7 @@ next
 
   have updated_properties:
     "\<And>n. firstUncommittedSlot (nodeState' n) = (if n = n\<^sub>0 then i else firstUncommittedSlot (nodeState n)) "
-    "\<And>n. publishPermitted (nodeState' n) = (publishPermitted (nodeState n) \<and> n \<noteq> n\<^sub>0)"
+    "\<And>n. publishPermitted (nodeState' n) = (publishPermitted (nodeState n) \<or> n = n\<^sub>0)"
     "\<And>n. publishVotes (nodeState' n) = (if n = n\<^sub>0 then {} else publishVotes (nodeState n))"
     "\<And>n. currentVotingNodes (nodeState' n) = (if n = n\<^sub>0 then conf else currentVotingNodes (nodeState n))"
     "\<And>n. joinVotes (nodeState' n) = (if n = n\<^sub>0 then {} else joinVotes (nodeState n))"
@@ -2776,7 +2776,8 @@ next
       using True firstUncommittedSlot_PublishRequest nd_def by blast
 
     from PublishRequest_publishPermitted_currentTerm show "\<And>t x. n \<midarrow>\<langle> PublishRequest (firstUncommittedSlot (nodeState' n)) t x \<rangle>\<leadsto> \<Longrightarrow> publishPermitted (nodeState' n) \<Longrightarrow> t < currentTerm (nodeState n)"
-      unfolding updated_properties apply (cases "n = n\<^sub>0", auto) done
+      unfolding updated_properties apply (cases "n = n\<^sub>0", auto)
+      using True firstUncommittedSlot_PublishRequest nd_def by blast
 
     from currentClusterState_lastCommittedClusterStateBefore show "currentClusterState (nodeState' n) = lastCommittedClusterStateBefore (firstUncommittedSlot (nodeState' n))"
       unfolding updated_properties apply (cases "n = n\<^sub>0", auto)
