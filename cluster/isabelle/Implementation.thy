@@ -363,7 +363,7 @@ definition initialNodeState :: "Node \<Rightarrow> NodeData"
       , lastAcceptedData = None
       , joinVotes = {}
       , electionWon = False
-      , publishPermitted = True
+      , publishPermitted = False
       , publishVotes = {} \<rparr>"
 
 end
