@@ -116,10 +116,9 @@ subsection \<open>Node implementation\<close>
 
 text \<open>Each node holds the following local data.\<close>
 
-record SlotTermValue =
-  stvSlot :: Slot
-  stvTerm :: Term
-  stvValue :: Value
+record TermValue =
+  tvTerm :: Term
+  tvValue :: Value
 
 record NodeData =
   currentNode :: Node
@@ -129,7 +128,7 @@ record NodeData =
   currentVotingNodes :: "Node set"
   currentClusterState :: ClusterState
   (* accepted state *)
-  lastAcceptedData :: "SlotTermValue option"
+  lastAcceptedData :: "TermValue option"
   (* election state *)
   joinVotes :: "Node set"
   electionWon :: bool
@@ -137,30 +136,20 @@ record NodeData =
   publishPermitted :: bool
   publishVotes :: "Node set"
 
-definition lastAcceptedSlot :: "NodeData \<Rightarrow> Slot"
-  where "lastAcceptedSlot nd \<equiv> stvSlot (THE lad. lastAcceptedData nd = Some lad)"
-
 definition lastAcceptedValue :: "NodeData \<Rightarrow> Value"
-  where "lastAcceptedValue nd \<equiv> stvValue (THE lad. lastAcceptedData nd = Some lad)"
+  where "lastAcceptedValue nd \<equiv> tvValue (THE lad. lastAcceptedData nd = Some lad)"
 
 definition lastAcceptedTerm :: "NodeData \<Rightarrow> TermOption"
-  where "lastAcceptedTerm nd \<equiv> case lastAcceptedData nd of None \<Rightarrow> NO_TERM | Some lad \<Rightarrow> SomeTerm (stvTerm lad)"
+  where "lastAcceptedTerm nd \<equiv> case lastAcceptedData nd of None \<Rightarrow> NO_TERM | Some lad \<Rightarrow> SomeTerm (tvTerm lad)"
 
 definition isQuorum :: "NodeData \<Rightarrow> Node set \<Rightarrow> bool"
   where "isQuorum nd q \<equiv> q \<in> majorities (currentVotingNodes nd)"
 
-definition lastAcceptedTermInSlot :: "NodeData \<Rightarrow> TermOption"
-  where "lastAcceptedTermInSlot nd \<equiv> if firstUncommittedSlot nd = lastAcceptedSlot nd then lastAcceptedTerm nd else NO_TERM"
-
-lemma lastAcceptedSlot_joinVotes_update[simp]: "lastAcceptedSlot (joinVotes_update f nd) = lastAcceptedSlot nd" by (simp add: lastAcceptedSlot_def)
 lemma lastAcceptedValue_joinVotes_update[simp]: "lastAcceptedValue (joinVotes_update f nd) = lastAcceptedValue nd" by (simp add: lastAcceptedValue_def)
 lemma lastAcceptedTerm_joinVotes_update[simp]: "lastAcceptedTerm (joinVotes_update f nd) = lastAcceptedTerm nd" by (simp add: lastAcceptedTerm_def)
-lemma lastAcceptedTermInSlot_joinVotes_update[simp]: "lastAcceptedTermInSlot (joinVotes_update f nd) = lastAcceptedTermInSlot nd" by (simp add: lastAcceptedTermInSlot_def)
 
-lemma lastAcceptedSlot_electionWon_update[simp]: "lastAcceptedSlot (electionWon_update f nd) = lastAcceptedSlot nd" by (simp add: lastAcceptedSlot_def)
 lemma lastAcceptedValue_electionWon_update[simp]: "lastAcceptedValue (electionWon_update f nd) = lastAcceptedValue nd" by (simp add: lastAcceptedValue_def)
 lemma lastAcceptedTerm_electionWon_update[simp]: "lastAcceptedTerm (electionWon_update f nd) = lastAcceptedTerm nd" by (simp add: lastAcceptedTerm_def)
-lemma lastAcceptedTermInSlot_electionWon_update[simp]: "lastAcceptedTermInSlot (electionWon_update f nd) = lastAcceptedTermInSlot nd" by (simp add: lastAcceptedTermInSlot_def)
 
 text \<open>This method publishes a value via a @{term PublishRequest} message.\<close>
 
@@ -202,7 +191,7 @@ message which is handled as follows.\<close>
 
 definition handleClientValue :: "Value \<Rightarrow> NodeData \<Rightarrow> (NodeData * Message option)"
   where
-    "handleClientValue x nd \<equiv> if lastAcceptedTermInSlot nd = NO_TERM then publishValue x nd else (nd, None)"
+    "handleClientValue x nd \<equiv> if lastAcceptedTerm nd = NO_TERM then publishValue x nd else (nd, None)"
 
 text \<open>A @{term StartJoin} message is checked for acceptability and then handled by updating the
 node's term and yielding a @{term Vote} message as follows.\<close>
@@ -214,7 +203,7 @@ definition handleStartJoin :: "Term \<Rightarrow> NodeData \<Rightarrow> (NodeDa
           then ( ensureCurrentTerm t nd
                , Some (Vote (firstUncommittedSlot nd)
                                      t
-                                    (lastAcceptedTermInSlot nd)))
+                                    (lastAcceptedTerm nd)))
           else (nd, None)"
 
 text \<open>A @{term Vote} message is checked for acceptability and then handled as follows, perhaps
@@ -225,9 +214,9 @@ definition handleVote :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarro
     "handleVote s i t a nd \<equiv>
          if t = currentTerm nd
              \<and> (i < firstUncommittedSlot nd
-                \<or> (i = firstUncommittedSlot nd \<and> a \<le> lastAcceptedTermInSlot nd))
+                \<or> (i = firstUncommittedSlot nd \<and> a \<le> lastAcceptedTerm nd))
           then let nd1 = addElectionVote s i a nd
-               in (if lastAcceptedTermInSlot nd = NO_TERM then (nd1, None) else publishValue (lastAcceptedValue nd1) nd1)
+               in (if lastAcceptedTerm nd = NO_TERM then (nd1, None) else publishValue (lastAcceptedValue nd1) nd1)
           else (nd, None)"
 
 text \<open>A @{term PublishRequest} message is checked for acceptability and then handled as follows,
@@ -238,7 +227,7 @@ definition handlePublishRequest :: "Slot \<Rightarrow> Term \<Rightarrow> Value 
     "handlePublishRequest i t x nd \<equiv>
           if i = firstUncommittedSlot nd
                 \<and> t = currentTerm nd
-          then ( nd \<lparr> lastAcceptedData := Some \<lparr> stvSlot = i, stvTerm = t, stvValue = x \<rparr> \<rparr>
+          then ( nd \<lparr> lastAcceptedData := Some \<lparr> tvTerm = t, tvValue = x \<rparr> \<rparr>
                , Some (PublishResponse i t))
           else (nd, None)"
 
@@ -277,9 +266,10 @@ and \texttt{ClusterState} via the @{term applyValue} method. It yields no messag
 definition handleApplyCommit :: "Slot \<Rightarrow> Term \<Rightarrow> NodeData \<Rightarrow> NodeData"
   where
     "handleApplyCommit i t nd \<equiv>
-        if i = firstUncommittedSlot nd \<and> lastAcceptedTermInSlot nd = SomeTerm t
+        if i = firstUncommittedSlot nd \<and> lastAcceptedTerm nd = SomeTerm t
           then (applyAcceptedValue nd)
                      \<lparr> firstUncommittedSlot := i + 1
+                     , lastAcceptedData := None
                      , publishPermitted := True
                      , publishVotes := {} \<rparr>
           else nd"
@@ -298,6 +288,7 @@ definition handleCatchUpResponse :: "Slot \<Rightarrow> Node set \<Rightarrow> C
                 , publishVotes := {}
                 , currentVotingNodes := conf
                 , currentClusterState := cs
+                , lastAcceptedData := None
                 , joinVotes := {}
                 , electionWon := False \<rparr>
         else nd"
