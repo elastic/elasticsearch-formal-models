@@ -113,7 +113,7 @@ HandleJoinRequest(n, m, rcvrs) ==
         /\ (m.laTerm /= Nil => LastAcceptedTermInSlot(n) /= Nil /\ m.laTerm <= LastAcceptedTermInSlot(n))
   /\ joinVotes' = [joinVotes EXCEPT ![n] = @ \cup { m.source }]
   /\ electionWon' = [electionWon EXCEPT ![n] = IsQuorum(joinVotes'[n], currentConfiguration[n])]
-  /\ IF publishPermitted[n] /\ LastAcceptedTermInSlot(n) /= Nil /\ electionWon'[n] /\ \lnot electionWon[n]
+  /\ IF electionWon'[n] /\ publishPermitted[n] /\ LastAcceptedTermInSlot(n) /= Nil 
      THEN LET publishRequests == { [method  |-> PublishRequest,
                                     source  |-> n,
                                     dest    |-> ns,
