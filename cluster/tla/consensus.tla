@@ -242,7 +242,7 @@ HandleCatchupResponse(n, m) ==
   /\ firstUncommittedSlot' = [firstUncommittedSlot EXCEPT ![n] = m.slot]
   /\ lastAcceptedTerm' = [lastAcceptedTerm EXCEPT ![n] = Nil]
   /\ lastAcceptedValue' = [lastAcceptedValue EXCEPT ![n] = Nil]
-  /\ publishPermitted' = [publishPermitted EXCEPT ![n] = FALSE]
+  /\ publishPermitted' = [publishPermitted EXCEPT ![n] = TRUE]
   /\ electionWon' = [electionWon EXCEPT ![n] = FALSE]
   /\ currentConfiguration' = [currentConfiguration EXCEPT ![n] = m.config]
   /\ currentClusterState' = [currentClusterState EXCEPT ![n] = m.state]
