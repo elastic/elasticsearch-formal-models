@@ -27,7 +27,8 @@ definition maxTerm :: "Term set \<Rightarrow> Term"
 
 text \<open>It works correctly on finite and nonempty sets as follows:\<close>
 
-lemma
+theorem
+  fixes S :: "Term set"
   assumes finite: "finite S"
   shows maxTerm_mem: "S \<noteq> {} \<Longrightarrow> maxTerm S \<in> S"
     and maxTerm_max: "\<And> t'. t' \<in> S \<Longrightarrow> t' \<le> maxTerm S"
@@ -69,6 +70,10 @@ proof -
 
   with t show "maxTerm S \<in> S" "\<And>t'. t' \<in> S \<Longrightarrow> t' \<le> maxTerm S" by simp_all
 qed auto
+
+lemma
+  assumes "\<And>t. t \<in> S \<Longrightarrow> t \<le> t'" "finite S" "S \<noteq> {}"
+  shows maxTerm_le: "maxTerm S \<le> t'" using assms maxTerm_mem by auto
 
 subsection \<open>Configurations and quorums\<close>
 

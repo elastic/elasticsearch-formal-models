@@ -37,7 +37,7 @@ locale oneSlot =
   assumes proposed: "proposed t
      \<Longrightarrow> \<exists> q \<in> Q. (\<forall> n \<in> q. promised n t)
                      \<and> (prevAccepted t q = {}
-                          \<or> v t = v (maxTerm (prevAccepted t q)))"
+                          \<or> (\<exists> t'. v t = v t' \<and> maxTerm (prevAccepted t q) \<le> t' \<and> proposed t' \<and> t' < t))"
   assumes proposed_finite: "finite {t. proposed t}"
   assumes accepted: "accepted n t \<Longrightarrow> proposed t"
   assumes committed: "committed t \<Longrightarrow> \<exists> q \<in> Q. \<forall> n \<in> q. accepted n t"
@@ -63,10 +63,10 @@ proof (induct t\<^sub>1 rule: less_induct)
   hence hyp: "\<And> t\<^sub>1'. \<lbrakk> t\<^sub>1' < t\<^sub>1; proposed t\<^sub>1'; t\<^sub>2 \<le> t\<^sub>1' \<rbrakk> \<Longrightarrow> v t\<^sub>1' = v t\<^sub>2"
     using le_imp_less_or_eq by blast
 
-  from `proposed t\<^sub>1` obtain q\<^sub>1 where
+  from `proposed t\<^sub>1` obtain q\<^sub>1 t\<^sub>1' where
     q\<^sub>1_quorum:   "q\<^sub>1 \<in> Q" and
     q\<^sub>1_promised: "\<And>n. n \<in> q\<^sub>1 \<Longrightarrow> promised n t\<^sub>1" and
-    q\<^sub>1_value:    "prevAccepted t\<^sub>1 q\<^sub>1 = {} \<or> v t\<^sub>1 = v (maxTerm (prevAccepted t\<^sub>1 q\<^sub>1))"
+    q\<^sub>1_value:    "prevAccepted t\<^sub>1 q\<^sub>1 = {} \<or> (v t\<^sub>1 = v t\<^sub>1' \<and> maxTerm (prevAccepted t\<^sub>1 q\<^sub>1) \<le> t\<^sub>1' \<and> proposed t\<^sub>1' \<and> t\<^sub>1' < t\<^sub>1)"
     by (meson proposed)
 
   from `committed t\<^sub>2` obtain q\<^sub>2 where
@@ -84,26 +84,24 @@ proof (induct t\<^sub>1 rule: less_induct)
   ultimately obtain t\<^sub>2' where t\<^sub>2': "promised\<^sub>b n t\<^sub>1 t\<^sub>2'"
     using less.prems(3) promised\<^sub>f promised_def by blast
 
-  have q\<^sub>1_value: "v t\<^sub>1 = v (maxTerm (prevAccepted t\<^sub>1 q\<^sub>1))"
+  have q\<^sub>1_value: "v t\<^sub>1 = v t\<^sub>1'" "maxTerm (prevAccepted t\<^sub>1 q\<^sub>1) \<le> t\<^sub>1'" "proposed t\<^sub>1'" "t\<^sub>1' < t\<^sub>1"
     using n\<^sub>1 prevAccepted_def q\<^sub>1_value t\<^sub>2' by auto
 
-  also have "... = v t\<^sub>2"
+  note `v t\<^sub>1 = v t\<^sub>1'`
+  also have "v t\<^sub>1' = v t\<^sub>2"
   proof (intro hyp)
     have p: "maxTerm (prevAccepted t\<^sub>1 q\<^sub>1) \<in> prevAccepted t\<^sub>1 q\<^sub>1"
       apply (intro maxTerm_mem prevAccepted_finite)
       using n\<^sub>1 prevAccepted_def t\<^sub>2' by auto
 
-    show "maxTerm (prevAccepted t\<^sub>1 q\<^sub>1) < t\<^sub>1"
-      using p prevAccepted_def promised\<^sub>b_lt by auto
-
-    show "proposed (maxTerm (prevAccepted t\<^sub>1 q\<^sub>1))"
-      using p prevAccepted_proposed by auto
+    show "t\<^sub>1' < t\<^sub>1" "proposed t\<^sub>1'" using q\<^sub>1_value by simp_all
 
     have "t\<^sub>2 \<le> t\<^sub>2'"
       by (meson \<open>accepted n t\<^sub>2\<close> less.prems(3) not_le promised\<^sub>b_max t\<^sub>2')
     also have "t\<^sub>2' \<le> maxTerm (prevAccepted t\<^sub>1 q\<^sub>1)"
       using n\<^sub>1 prevAccepted_def t\<^sub>2' prevAccepted_finite by (intro maxTerm_max, auto)
-    finally show "t\<^sub>2 \<le> maxTerm (prevAccepted t\<^sub>1 q\<^sub>1)" .
+    also have "... \<le> t\<^sub>1'" using q\<^sub>1_value by simp
+    finally show "t\<^sub>2 \<le> t\<^sub>1'" .
   qed
 
   finally show ?case .

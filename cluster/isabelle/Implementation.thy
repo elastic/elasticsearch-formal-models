@@ -49,6 +49,10 @@ qed
 
 end
 
+lemma NO_TERM_le [simp]: "NO_TERM \<le> t" by (cases t, simp_all add: less_eq_TermOption_def)
+lemma le_NO_TERM [simp]: "(t \<le> NO_TERM) = (t = NO_TERM)" by (cases t, simp_all add: less_eq_TermOption_def)
+lemma le_SomeTerm [simp]: "(SomeTerm t\<^sub>1 \<le> SomeTerm t\<^sub>2) = (t\<^sub>1 \<le> t\<^sub>2)" by (auto simp add: less_eq_TermOption_def)
+
 datatype Message
   = StartJoin Term
   | Vote Slot Term TermOption
@@ -112,41 +116,51 @@ subsection \<open>Node implementation\<close>
 
 text \<open>Each node holds the following local data.\<close>
 
-record LastAcceptedData =
-  ladSlot :: Slot
-  ladTerm :: Term
-  ladValue :: Value
+record SlotTermValue =
+  stvSlot :: Slot
+  stvTerm :: Term
+  stvValue :: Value
 
 record NodeData =
-  currentNode :: Node (* identity of this node *)
-  firstUncommittedSlot :: Slot (* all slots strictly below this one are committed *)
-  currentTerm :: Term (* greatest term for which a promise was sent, and term of votes being collected *)
-  currentVotingNodes :: "Node set" (* configuration of the currentEra - the set of voting nodes *)
-  currentClusterState :: ClusterState (* last-committed cluster state *)
-  (* acceptor data *)
-  lastAcceptedData :: "LastAcceptedData option"
-  (* election data *)
-  joinVotes :: "Node set" (* set of nodes that have sent a Vote for the current currentTerm *)
+  currentNode :: Node
+  currentTerm :: Term
+  (* committed state *)
+  firstUncommittedSlot :: Slot
+  currentVotingNodes :: "Node set"
+  currentClusterState :: ClusterState
+  (* accepted state *)
+  lastAcceptedData :: "SlotTermValue option"
+  (* election state *)
+  joinVotes :: "Node set"
   electionWon :: bool
-  electionValueForced :: bool (* if True, must propose lastAcceptedValue for this slot on winning an election; if False, can propose anything *)
-  (* learner data *)
-  publishPermitted :: bool (* if True, may publish a value for this slot/term pair; if False, must not: either there is definitely a PublishRequest in flight, or we've just rebooted. *)
+  (* publish state *)
+  publishPermitted :: bool
   publishVotes :: "Node set"
 
 definition lastAcceptedSlot :: "NodeData \<Rightarrow> Slot"
-  where "lastAcceptedSlot nd \<equiv> ladSlot (THE lad. lastAcceptedData nd = Some lad)"
+  where "lastAcceptedSlot nd \<equiv> stvSlot (THE lad. lastAcceptedData nd = Some lad)"
 
 definition lastAcceptedValue :: "NodeData \<Rightarrow> Value"
-  where "lastAcceptedValue nd \<equiv> ladValue (THE lad. lastAcceptedData nd = Some lad)"
+  where "lastAcceptedValue nd \<equiv> stvValue (THE lad. lastAcceptedData nd = Some lad)"
 
 definition lastAcceptedTerm :: "NodeData \<Rightarrow> TermOption"
-  where "lastAcceptedTerm nd \<equiv> case lastAcceptedData nd of None \<Rightarrow> NO_TERM | Some lad \<Rightarrow> SomeTerm (ladTerm lad)"
+  where "lastAcceptedTerm nd \<equiv> case lastAcceptedData nd of None \<Rightarrow> NO_TERM | Some lad \<Rightarrow> SomeTerm (stvTerm lad)"
 
 definition isQuorum :: "NodeData \<Rightarrow> Node set \<Rightarrow> bool"
   where "isQuorum nd q \<equiv> q \<in> majorities (currentVotingNodes nd)"
 
 definition lastAcceptedTermInSlot :: "NodeData \<Rightarrow> TermOption"
   where "lastAcceptedTermInSlot nd \<equiv> if firstUncommittedSlot nd = lastAcceptedSlot nd then lastAcceptedTerm nd else NO_TERM"
+
+lemma lastAcceptedSlot_joinVotes_update[simp]: "lastAcceptedSlot (joinVotes_update f nd) = lastAcceptedSlot nd" by (simp add: lastAcceptedSlot_def)
+lemma lastAcceptedValue_joinVotes_update[simp]: "lastAcceptedValue (joinVotes_update f nd) = lastAcceptedValue nd" by (simp add: lastAcceptedValue_def)
+lemma lastAcceptedTerm_joinVotes_update[simp]: "lastAcceptedTerm (joinVotes_update f nd) = lastAcceptedTerm nd" by (simp add: lastAcceptedTerm_def)
+lemma lastAcceptedTermInSlot_joinVotes_update[simp]: "lastAcceptedTermInSlot (joinVotes_update f nd) = lastAcceptedTermInSlot nd" by (simp add: lastAcceptedTermInSlot_def)
+
+lemma lastAcceptedSlot_electionWon_update[simp]: "lastAcceptedSlot (electionWon_update f nd) = lastAcceptedSlot nd" by (simp add: lastAcceptedSlot_def)
+lemma lastAcceptedValue_electionWon_update[simp]: "lastAcceptedValue (electionWon_update f nd) = lastAcceptedValue nd" by (simp add: lastAcceptedValue_def)
+lemma lastAcceptedTerm_electionWon_update[simp]: "lastAcceptedTerm (electionWon_update f nd) = lastAcceptedTerm nd" by (simp add: lastAcceptedTerm_def)
+lemma lastAcceptedTermInSlot_electionWon_update[simp]: "lastAcceptedTermInSlot (electionWon_update f nd) = lastAcceptedTermInSlot nd" by (simp add: lastAcceptedTermInSlot_def)
 
 text \<open>This method publishes a value via a @{term PublishRequest} message.\<close>
 
@@ -172,7 +186,6 @@ definition ensureCurrentTerm :: "Term \<Rightarrow> NodeData \<Rightarrow> NodeD
               \<lparr> joinVotes := {}
               , currentTerm := t
               , electionWon := False
-              , electionValueForced := False
               , publishPermitted := True
               , publishVotes := {} \<rparr>"
 
@@ -182,7 +195,6 @@ definition addElectionVote :: "Node \<Rightarrow> Slot => TermOption \<Rightarro
   where
     "addElectionVote s i a nd \<equiv> let newVotes = insert s (joinVotes nd)
       in nd \<lparr> joinVotes := newVotes
-            , electionValueForced := electionValueForced nd \<or> (a \<noteq> NO_TERM \<and> i = firstUncommittedSlot nd)
             , electionWon := isQuorum nd newVotes \<rparr>"
 
 text \<open>Clients request the cluster to achieve consensus on certain values using the @{term ClientValue}
@@ -190,7 +202,7 @@ message which is handled as follows.\<close>
 
 definition handleClientValue :: "Value \<Rightarrow> NodeData \<Rightarrow> (NodeData * Message option)"
   where
-    "handleClientValue x nd \<equiv> if electionValueForced nd then (nd, None) else publishValue x nd"
+    "handleClientValue x nd \<equiv> if lastAcceptedTermInSlot nd = NO_TERM then publishValue x nd else (nd, None)"
 
 text \<open>A @{term StartJoin} message is checked for acceptability and then handled by updating the
 node's term and yielding a @{term Vote} message as follows.\<close>
@@ -213,12 +225,9 @@ definition handleVote :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarro
     "handleVote s i t a nd \<equiv>
          if t = currentTerm nd
              \<and> (i < firstUncommittedSlot nd
-                \<or> (i = firstUncommittedSlot nd
-                    \<and> (a = NO_TERM
-                        \<or> a = lastAcceptedTermInSlot nd
-                        \<or> (a < lastAcceptedTermInSlot nd \<and> electionValueForced nd))))
+                \<or> (i = firstUncommittedSlot nd \<and> a \<le> lastAcceptedTermInSlot nd))
           then let nd1 = addElectionVote s i a nd
-               in (if electionValueForced nd1 then publishValue (lastAcceptedValue nd1) nd1 else (nd1, None))
+               in (if lastAcceptedTermInSlot nd = NO_TERM then (nd1, None) else publishValue (lastAcceptedValue nd1) nd1)
           else (nd, None)"
 
 text \<open>A @{term PublishRequest} message is checked for acceptability and then handled as follows,
@@ -229,7 +238,7 @@ definition handlePublishRequest :: "Slot \<Rightarrow> Term \<Rightarrow> Value 
     "handlePublishRequest i t x nd \<equiv>
           if i = firstUncommittedSlot nd
                 \<and> t = currentTerm nd
-          then ( nd \<lparr> lastAcceptedData := Some \<lparr> ladSlot = i, ladTerm = t, ladValue = x \<rparr> \<rparr>
+          then ( nd \<lparr> lastAcceptedData := Some \<lparr> stvSlot = i, stvTerm = t, stvValue = x \<rparr> \<rparr>
                , Some (PublishResponse i t))
           else (nd, None)"
 
@@ -272,7 +281,6 @@ definition handleApplyCommit :: "Slot \<Rightarrow> Term \<Rightarrow> NodeData 
           then (applyAcceptedValue nd)
                      \<lparr> firstUncommittedSlot := i + 1
                      , publishPermitted := True
-                     , electionValueForced := False
                      , publishVotes := {} \<rparr>
           else nd"
 
@@ -287,7 +295,6 @@ definition handleCatchUpResponse :: "Slot \<Rightarrow> Node set \<Rightarrow> C
       if firstUncommittedSlot nd < i
         then nd \<lparr> firstUncommittedSlot := i
                 , publishPermitted := False
-                , electionValueForced := False
                 , publishVotes := {}
                 , currentVotingNodes := conf
                 , currentClusterState := cs
@@ -302,14 +309,13 @@ definition handleReboot :: "NodeData \<Rightarrow> NodeData"
   where
     "handleReboot nd \<equiv>
       \<lparr> currentNode = currentNode nd
-      , firstUncommittedSlot = firstUncommittedSlot nd
       , currentTerm = currentTerm nd
+      , firstUncommittedSlot = firstUncommittedSlot nd
       , currentVotingNodes = currentVotingNodes nd
       , currentClusterState = currentClusterState nd
       , lastAcceptedData = lastAcceptedData nd
       , joinVotes = {}
       , electionWon = False
-      , electionValueForced = False
       , publishPermitted = False
       , publishVotes = {} \<rparr>"
 
@@ -359,14 +365,13 @@ and the initial \texttt{ClusterState}, here shown as @{term "ClusterState 0"}.\<
 definition initialNodeState :: "Node \<Rightarrow> NodeData"
   where "initialNodeState n =
       \<lparr> currentNode = n
-      , firstUncommittedSlot = 0
       , currentTerm = 0
+      , firstUncommittedSlot = 0
       , currentVotingNodes = V\<^sub>0
       , currentClusterState = CS\<^sub>0
       , lastAcceptedData = None
       , joinVotes = {}
       , electionWon = False
-      , electionValueForced = False
       , publishPermitted = False
       , publishVotes = {} \<rparr>"
 
