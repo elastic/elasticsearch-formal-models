@@ -246,9 +246,9 @@ definition doVote :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarrow> T
       firstUncommittedSlot <- getFirstUncommittedSlot;
       when (voteFirstUncommittedSlot > firstUncommittedSlot) (throw IllegalArgumentException);
 
-      lastAcceptedTermInSlot <- getLastAcceptedTerm;
+      lastAcceptedTerm <- getLastAcceptedTerm;
       when (voteFirstUncommittedSlot = firstUncommittedSlot
-              \<and> voteLastAcceptedTerm > lastAcceptedTermInSlot)
+              \<and> voteLastAcceptedTerm > lastAcceptedTerm)
           (throw IllegalArgumentException);
 
       modifyJoinVotes (insert sourceNode);
@@ -259,8 +259,7 @@ definition doVote :: "Node \<Rightarrow> Slot \<Rightarrow> Term \<Rightarrow> T
       let electionWon' = card (joinVotes \<inter> currentVotingNodes) * 2 > card currentVotingNodes;
       setElectionWon electionWon';
       publishPermitted <- getPublishPermitted;
-      lastAcceptedTermInSlot <- getLastAcceptedTerm;
-      when (electionWon' \<and> publishPermitted \<and> lastAcceptedTermInSlot \<noteq> NO_TERM) (do {
+      when (electionWon' \<and> publishPermitted \<and> lastAcceptedTerm \<noteq> NO_TERM) (do {
         setPublishPermitted False;
 
         lastAcceptedValue <- gets lastAcceptedValue; (* NB must be present since lastAcceptedTermInSlot \<noteq> NO_TERM *)
