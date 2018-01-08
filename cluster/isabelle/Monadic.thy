@@ -382,6 +382,13 @@ definition doClientValue :: "Value \<Rightarrow> unit Action"
       broadcast (PublishRequest firstUncommittedSlot currentTerm x)
     }"
 
+definition doDiscardJoinVotes :: "unit Action"
+  where
+    "doDiscardJoinVotes \<equiv> do {
+      setJoinVotes {};
+      setElectionWon False
+    }"
+
 definition doReboot :: "unit Action"
   where
     "doReboot \<equiv> modifyNodeData (\<lambda>nd.
@@ -411,6 +418,7 @@ definition dispatchMessageInner :: "RoutedMessage \<Rightarrow> unit Action"
           | ApplyCommit i t \<Rightarrow> doCommit \<lparr> stSlot = i, stTerm = t \<rparr>
           | CatchUpRequest \<Rightarrow> generateCatchup (sender m)
           | CatchUpResponse i conf cs \<Rightarrow> applyCatchup i conf cs
+          | DiscardJoinVotes \<Rightarrow> doDiscardJoinVotes
           | Reboot \<Rightarrow> doReboot"
 
 definition dispatchMessage :: "RoutedMessage \<Rightarrow> unit Action"
@@ -805,22 +813,18 @@ proof (intro ext runM_inject)
       with dest_ok show ?thesis
         by (simp add: ProcessMessageAction_def dispatchMessageInner_def
             doReboot_def ProcessMessage_def handleReboot_def ignoringExceptions_def catch_def runM_when_continue)
+
+    next
+      case DiscardJoinVotes
+      with dest_ok show ?thesis
+        by (simp add: ProcessMessageAction_def dispatchMessageInner_def
+            doDiscardJoinVotes_def ProcessMessage_def handleDiscardJoinVotes_def ignoringExceptions_def catch_def 
+            runM_when_continue setJoinVotes_def sets_def setElectionWon_def)
+
     qed
 
     finally show ?thesis .
   qed
 qed
-
-definition clearTransientState :: "unit Action"
-  where
-    "clearTransientState \<equiv> do {
-      setJoinVotes {};
-      setElectionWon False;
-      setPublishPermitted False;
-      setPublishVotes {}
-    }"
-
-lemma "clearTransientState = doReboot"
-  by (intro runM_inject, simp add: clearTransientState_def doReboot_def setJoinVotes_def setElectionWon_def setPublishPermitted_def sets_def setPublishVotes_def)
 
 end

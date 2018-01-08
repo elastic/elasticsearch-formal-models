@@ -62,6 +62,7 @@ datatype Message
   | ApplyCommit Slot Term
   | CatchUpRequest
   | CatchUpResponse Slot "Node set" ClusterState
+  | DiscardJoinVotes
   | Reboot
 
 text \<open>Some prose descriptions of these messages follows, in order to give a bit more of an
@@ -310,6 +311,13 @@ definition handleReboot :: "NodeData \<Rightarrow> NodeData"
       , publishPermitted = False
       , publishVotes = {} \<rparr>"
 
+text \<open>A @{term DiscardJoinVotes} message discards the votes received by a node. It yields
+no messages.\<close>
+
+definition handleDiscardJoinVotes :: "NodeData \<Rightarrow> NodeData"
+  where
+  "handleDiscardJoinVotes nd \<equiv> nd \<lparr> electionWon := False, joinVotes := {} \<rparr>"
+
 text \<open>This function dispatches incoming messages to the appropriate handler method, and
 routes any responses to the appropriate places. In particular, @{term Vote} messages
 (sent by the @{term handleStartJoin} method) and
@@ -346,6 +354,8 @@ definition ProcessMessage :: "NodeData \<Rightarrow> RoutedMessage \<Rightarrow>
               \<Rightarrow> respondToSender (handleCatchUpRequest nd)
           | CatchUpResponse i conf cs
               \<Rightarrow> (handleCatchUpResponse i conf cs nd, None)
+          | DiscardJoinVotes
+              \<Rightarrow> (handleDiscardJoinVotes nd, None)
           | Reboot
               \<Rightarrow> (handleReboot nd, None)
         else (nd, None)"
