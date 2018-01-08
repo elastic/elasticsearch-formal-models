@@ -102,6 +102,15 @@ assumes CatchUpResponse_V:
 assumes CatchUpResponse_lastCommittedClusterStateBefore:
   "\<And>i conf cs. \<langle> CatchUpResponse i conf cs \<rangle>\<leadsto> \<Longrightarrow> lastCommittedClusterStateBefore i = cs"
 
+definition (in zenMessages) votedFor :: "Node \<Rightarrow> Node \<Rightarrow> Term \<Rightarrow> bool"
+  where "votedFor n\<^sub>1 n\<^sub>2 t \<equiv> \<exists> i. promised i n\<^sub>1 n\<^sub>2 t"
+
+lemma (in zenMessages) votedFor_unique:
+  assumes "votedFor n n\<^sub>1 t"
+  assumes "votedFor n n\<^sub>2 t"
+  shows "n\<^sub>1 = n\<^sub>2"
+  using assms unfolding votedFor_def by (meson Destination.inject Vote_unique_destination promised_def)
+
 lemma (in zenMessages) V_simps[simp]:
   "V 0 = V\<^sub>0"
   "V (Suc i) = (if isReconfiguration (v\<^sub>c i) then getConf (v\<^sub>c i) else V i)"
@@ -360,6 +369,11 @@ locale zen = zenMessages +
   assumes currentClusterState_lastCommittedClusterStateBefore:
     "\<And>n. currentClusterState (nodeState n)
               = lastCommittedClusterStateBefore (firstUncommittedSlot (nodeState n))"
+
+lemma (in zen) joinVotes_votedFor:
+  assumes "n' \<in> joinVotes (nodeState n)"
+  shows "votedFor n' n (currentTerm (nodeState n))"
+  using joinVotes assms unfolding votedFor_def by auto
 
 locale zenStep = zen +
   fixes messages' :: "RoutedMessage set"
