@@ -811,4 +811,16 @@ proof (intro ext runM_inject)
   qed
 qed
 
+definition clearTransientState :: "unit Action"
+  where
+    "clearTransientState \<equiv> do {
+      setJoinVotes {};
+      setElectionWon False;
+      setPublishPermitted False;
+      setPublishVotes {}
+    }"
+
+lemma "clearTransientState = doReboot"
+  by (intro runM_inject, simp add: clearTransientState_def doReboot_def setJoinVotes_def setElectionWon_def setPublishPermitted_def sets_def setPublishVotes_def)
+
 end
