@@ -20,13 +20,16 @@
     <stringAttribute key="modelBehaviorNext" value="Next"/>
     <stringAttribute key="modelBehaviorSpec" value=""/>
     <intAttribute key="modelBehaviorSpecType" value="2"/>
-    <stringAttribute key="modelBehaviorVars" value="lastAcceptedTerm, currentClusterState, messages, firstUncommittedSlot, electionWon, currentTerm, currentConfiguration, electionValueForced, joinVotes, publishPermitted, lastAcceptedValue"/>
+    <stringAttribute key="modelBehaviorVars" value="lastAcceptedTerm, currentClusterState, messages, firstUncommittedSlot, electionWon, publishVotes, currentTerm, currentConfiguration, joinVotes, publishPermitted, lastAcceptedValue"/>
     <stringAttribute key="modelComments" value=""/>
     <booleanAttribute key="modelCorrectnessCheckDeadlock" value="true"/>
     <listAttribute key="modelCorrectnessInvariants">
         <listEntry value="1StateMachineSafety"/>
         <listEntry value="1OneMasterPerTerm"/>
         <listEntry value="1LogMatching"/>
+        <listEntry value="1SingleNodeInvariant"/>
+        <listEntry value="1LogMatchingMessages"/>
+        <listEntry value="1SafeCatchupMessages"/>
     </listAttribute>
     <listAttribute key="modelCorrectnessProperties"/>
     <stringAttribute key="modelExpressionEval" value=""/>
