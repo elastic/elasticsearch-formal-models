@@ -131,6 +131,7 @@ HandleJoinRequest(n, m) ==
        /\ publishPermitted' = [publishPermitted EXCEPT ![n] = FALSE]
      ELSE
        /\ UNCHANGED <<messages, publishPermitted>>
+  /\ Assert(electionWon'[n] /\ \lnot electionWon[n] => publishPermitted[n], "publishing permitted when winning election")
   /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, publishVotes,
                  firstUncommittedSlot, lastAcceptedValue, lastAcceptedTerm, allowElection>>
 
