@@ -4,6 +4,10 @@
 **/tla/*.toolbox/*.log
 **/tla/*.toolbox/*.pdf
 **/tla/*.toolbox/*.tex
+**/tla/*.toolbox/**/*.tla
+**/tla/*.toolbox/**/*.out
+**/tla/*.toolbox/**/MC.cfg
 **/tla/*.pdf
+**/tla/*.old
 **/*~
 cluster/isabelle/output
