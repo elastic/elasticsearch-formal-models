@@ -13,215 +13,350 @@ ClientRequestType == {
         , v \in ({NULL, 1, 2})
         }
 
-PrimaryLuceneName == "PrimaryLucene"
-ReplicaLuceneName == "ReplicaLucene"
-LuceneNames == {PrimaryLuceneName, ReplicaLuceneName}
-
-InitialLuceneState ==
-    [ document           |-> NULL
-    , buffered_operation |-> NULL
-    , state              |-> OPEN
-    ]
-
-
 (* --algorithm basic
 
 variables
     initial_client_requests \in {x \in SUBSET ClientRequestType: Cardinality(x) <= 4},
     client_requests = initial_client_requests,
     replication_requests = {},
-    primaryActive = TRUE,
-    lucenes = [ PrimaryLucene |-> InitialLuceneState
-              , ReplicaLucene |-> InitialLuceneState
-              ]
+    isGeneratingRequests = TRUE,
+    lucene =
+        [ document           |-> NULL
+        , buffered_operation |-> NULL
+        , state              |-> OPEN
+        ]
 
-process LuceneProcess \in LuceneNames
-begin
-    LuceneLoop:
-    while lucenes[self].state /= CLOSED \/ lucenes[self].buffered_operation /= NULL do
-        await lucenes[self].buffered_operation /= NULL;
-        LuceneRefresh:
-        lucenes[self] := [lucenes[self] EXCEPT
-            !.document =
-                CASE lucenes[self].buffered_operation.type = INDEX
-                -> [ version |-> lucenes[self].buffered_operation.version
-                   , seqno   |-> lucenes[self].buffered_operation.seqno
-                   , content |-> lucenes[self].buffered_operation.content
-                   ]
-                  [] lucenes[self].buffered_operation.type = DELETE
-                -> NULL,
-            !.buffered_operation = NULL
-            ];
-    end while;
-end process;
-
-process PrimaryEngineProcess = "PrimaryEngine"
+process ReplicationRequestGeneratorProcess = "ReplicationRequestGenerator"
 variables
-    next_seqno = 0,
+    next_seqno = 1,
+    document = NULL,
+    highest_document_version = 0,
 begin
     PrimaryLoop:
     while client_requests /= {} do
         HandleClientRequest:
         with client_request \in client_requests do
             client_requests := client_requests \ {client_request};
-            if client_request.type = INDEX
+            
+            if \/ client_request.version = NULL
+               \/ client_request.version > highest_document_version
             then
-                lucenes[PrimaryLuceneName].buffered_operation :=
-                    [ version |-> client_request.version
-                    , content |-> client_request.content
-                    , seqno   |-> next_seqno
-                    , type    |-> INDEX
-                    ];
-                replication_requests := replication_requests
-                    \union {lucenes[PrimaryLuceneName].buffered_operation};
-            elsif client_request.type = DELETE
-            then
-                lucenes[PrimaryLuceneName].buffered_operation := [ type |-> DELETE ];
-                replication_requests := replication_requests
-                    \union { [ type |-> DELETE, seqno |-> next_seqno ]};
+            
+                highest_document_version := IF client_request.version = NULL
+                                            THEN highest_document_version + 1
+                                            ELSE client_request.version;
+            
+                with replication_message_duplicates \in {1,2} do
+                
+                    if client_request.type = INDEX
+                    then
+                        document := [ version |-> highest_document_version
+                                    , seqno   |-> next_seqno
+                                    , content |-> client_request.content
+                                    ];
+                        replication_requests := replication_requests
+                            \union {[ version |-> highest_document_version
+                                    , seqno   |-> next_seqno
+                                    , content |-> client_request.content
+                                    , type    |-> INDEX
+                                    , count   |-> replication_message_duplicates
+                                    ]};
+                    
+                    elsif client_request.type = DELETE
+                    then
+                        document := NULL;
+                        replication_requests := replication_requests
+                            \union {[ seqno   |-> next_seqno
+                                    , type    |-> DELETE
+                                    , count   |-> replication_message_duplicates
+                                    ]};
+                    end if;
+        
+                    next_seqno := next_seqno + 1;
+                end with;
             end if;
-
-            next_seqno := next_seqno + 1;
         end with;
     end while;
-    lucenes[PrimaryLuceneName].state := CLOSED;
-    primaryActive := FALSE;
+    isGeneratingRequests := FALSE;
 end process
 
-process ReplicaEngineProcess = "ReplicaEngine"
+process LuceneProcess = "ReplicaLucene"
 begin
+    LuceneLoop:
+    while lucene.state /= CLOSED \/ lucene.buffered_operation /= NULL do
+        await lucene.buffered_operation /= NULL;
+        LuceneRefresh:
+        lucene := [lucene EXCEPT
+            !.document =
+                CASE lucene.buffered_operation.type = INDEX
+                -> [ version |-> lucene.buffered_operation.version
+                   , seqno   |-> lucene.buffered_operation.seqno
+                   , content |-> lucene.buffered_operation.content
+                   ]
+                  [] lucene.buffered_operation.type = DELETE
+                -> NULL,
+            !.buffered_operation = NULL
+            ];
+    end while;
+end process;
+
+process ReplicaEngineProcess = "ReplicaEngine"
+variables
+    local_check_point = 0, (* have processed _all_ operations <= local_check_point *)
+    seqnos_above_local_check_point = {},
+    max_seqno_for_document_in_version_map = NULL,
+begin
+    ReplicaStart:
+    await ~ isGeneratingRequests;
+    
     ReplicaLoop:
-    while primaryActive \/ replication_requests /= {} do
-        await replication_requests /= {};
+    while replication_requests /= {} do
         HandleReplicationRequest:
         with replication_request \in replication_requests do
-            replication_requests := replication_requests \ {replication_request};
-            if replication_request.type = INDEX
+         
+            (* consume request *)
+            replication_requests := (replication_requests \ {replication_request})
+                \union IF replication_request.count > 1
+                       THEN {[replication_request EXCEPT !.count = replication_request.count - 1]}
+                       ELSE {};
+
+            if \/ replication_request.seqno <= local_check_point
+               \/ /\ max_seqno_for_document_in_version_map /= NULL
+                  /\ replication_request.seqno <= max_seqno_for_document_in_version_map
             then
-                lucenes[ReplicaLuceneName].buffered_operation := replication_request;
-            elsif replication_request.type = DELETE
-            then
-                lucenes[ReplicaLuceneName].buffered_operation := [ type |-> DELETE ];
+                skip;
+            
+            else
+                        
+                if replication_request.type = INDEX
+                then
+                    lucene.buffered_operation := replication_request;
+                elsif replication_request.type = DELETE
+                then
+                    lucene.buffered_operation := [ type |-> DELETE ];
+                end if;
+                
+                if replication_request.seqno > local_check_point + 1
+                then
+                    (* cannot advance local check point *)
+                    seqnos_above_local_check_point := seqnos_above_local_check_point
+                        \union {replication_request.seqno}
+                else
+                    (* advance local check point *)
+                    local_check_point := CHOOSE n \in (local_check_point .. local_check_point + 100):
+                                                    /\ n > local_check_point
+                                                    /\ ((local_check_point + 2) .. n) \subseteq seqnos_above_local_check_point
+                                                    /\ (n + 1) \notin seqnos_above_local_check_point;
+                    seqnos_above_local_check_point := { n \in seqnos_above_local_check_point: local_check_point < n };
+                end if;
+
+                if replication_request.seqno <= local_check_point
+                then 
+                    max_seqno_for_document_in_version_map := NULL;
+                else
+                    max_seqno_for_document_in_version_map := replication_request.seqno;
+                end if;
             end if;
         end with;
     end while;
-    lucenes[ReplicaLuceneName].state := CLOSED;
+    lucene.state := CLOSED;
 end process
 
 end algorithm *)
 \* BEGIN TRANSLATION
 VARIABLES initial_client_requests, client_requests, replication_requests, 
-          primaryActive, lucenes, pc, next_seqno
+          isGeneratingRequests, lucene, pc, next_seqno, document, 
+          highest_document_version, local_check_point, 
+          seqnos_above_local_check_point, 
+          max_seqno_for_document_in_version_map
 
 vars == << initial_client_requests, client_requests, replication_requests, 
-           primaryActive, lucenes, pc, next_seqno >>
+           isGeneratingRequests, lucene, pc, next_seqno, document, 
+           highest_document_version, local_check_point, 
+           seqnos_above_local_check_point, 
+           max_seqno_for_document_in_version_map >>
 
-ProcSet == (LuceneNames) \cup {"PrimaryEngine"} \cup {"ReplicaEngine"}
+ProcSet == {"ReplicationRequestGenerator"} \cup {"ReplicaLucene"} \cup {"ReplicaEngine"}
 
 Init == (* Global variables *)
         /\ initial_client_requests \in {x \in SUBSET ClientRequestType: Cardinality(x) <= 4}
         /\ client_requests = initial_client_requests
         /\ replication_requests = {}
-        /\ primaryActive = TRUE
-        /\ lucenes = [ PrimaryLucene |-> InitialLuceneState
-                     , ReplicaLucene |-> InitialLuceneState
-                     ]
-        (* Process PrimaryEngineProcess *)
-        /\ next_seqno = 0
-        /\ pc = [self \in ProcSet |-> CASE self \in LuceneNames -> "LuceneLoop"
-                                        [] self = "PrimaryEngine" -> "PrimaryLoop"
-                                        [] self = "ReplicaEngine" -> "ReplicaLoop"]
+        /\ isGeneratingRequests = TRUE
+        /\ lucene = [ document           |-> NULL
+                    , buffered_operation |-> NULL
+                    , state              |-> OPEN
+                    ]
+        (* Process ReplicationRequestGeneratorProcess *)
+        /\ next_seqno = 1
+        /\ document = NULL
+        /\ highest_document_version = 0
+        (* Process ReplicaEngineProcess *)
+        /\ local_check_point = 0
+        /\ seqnos_above_local_check_point = {}
+        /\ max_seqno_for_document_in_version_map = NULL
+        /\ pc = [self \in ProcSet |-> CASE self = "ReplicationRequestGenerator" -> "PrimaryLoop"
+                                        [] self = "ReplicaLucene" -> "LuceneLoop"
+                                        [] self = "ReplicaEngine" -> "ReplicaStart"]
 
-LuceneLoop(self) == /\ pc[self] = "LuceneLoop"
-                    /\ IF lucenes[self].state /= CLOSED \/ lucenes[self].buffered_operation /= NULL
-                          THEN /\ lucenes[self].buffered_operation /= NULL
-                               /\ pc' = [pc EXCEPT ![self] = "LuceneRefresh"]
-                          ELSE /\ pc' = [pc EXCEPT ![self] = "Done"]
-                    /\ UNCHANGED << initial_client_requests, client_requests, 
-                                    replication_requests, primaryActive, 
-                                    lucenes, next_seqno >>
-
-LuceneRefresh(self) == /\ pc[self] = "LuceneRefresh"
-                       /\ lucenes' = [lucenes EXCEPT ![self] =              [lucenes[self] EXCEPT
-                                                               !.document =
-                                                                   CASE lucenes[self].buffered_operation.type = INDEX
-                                                                   -> [ version |-> lucenes[self].buffered_operation.version
-                                                                      , seqno   |-> lucenes[self].buffered_operation.seqno
-                                                                      , content |-> lucenes[self].buffered_operation.content
-                                                                      ]
-                                                                     [] lucenes[self].buffered_operation.type = DELETE
-                                                                   -> NULL,
-                                                               !.buffered_operation = NULL
-                                                               ]]
-                       /\ pc' = [pc EXCEPT ![self] = "LuceneLoop"]
-                       /\ UNCHANGED << initial_client_requests, 
-                                       client_requests, replication_requests, 
-                                       primaryActive, next_seqno >>
-
-LuceneProcess(self) == LuceneLoop(self) \/ LuceneRefresh(self)
-
-PrimaryLoop == /\ pc["PrimaryEngine"] = "PrimaryLoop"
+PrimaryLoop == /\ pc["ReplicationRequestGenerator"] = "PrimaryLoop"
                /\ IF client_requests /= {}
-                     THEN /\ pc' = [pc EXCEPT !["PrimaryEngine"] = "HandleClientRequest"]
-                          /\ UNCHANGED << primaryActive, lucenes >>
-                     ELSE /\ lucenes' = [lucenes EXCEPT ![PrimaryLuceneName].state = CLOSED]
-                          /\ primaryActive' = FALSE
-                          /\ pc' = [pc EXCEPT !["PrimaryEngine"] = "Done"]
+                     THEN /\ pc' = [pc EXCEPT !["ReplicationRequestGenerator"] = "HandleClientRequest"]
+                          /\ UNCHANGED isGeneratingRequests
+                     ELSE /\ isGeneratingRequests' = FALSE
+                          /\ pc' = [pc EXCEPT !["ReplicationRequestGenerator"] = "Done"]
                /\ UNCHANGED << initial_client_requests, client_requests, 
-                               replication_requests, next_seqno >>
+                               replication_requests, lucene, next_seqno, 
+                               document, highest_document_version, 
+                               local_check_point, 
+                               seqnos_above_local_check_point, 
+                               max_seqno_for_document_in_version_map >>
 
-HandleClientRequest == /\ pc["PrimaryEngine"] = "HandleClientRequest"
+HandleClientRequest == /\ pc["ReplicationRequestGenerator"] = "HandleClientRequest"
                        /\ \E client_request \in client_requests:
                             /\ client_requests' = client_requests \ {client_request}
-                            /\ IF client_request.type = INDEX
-                                  THEN /\ lucenes' = [lucenes EXCEPT ![PrimaryLuceneName].buffered_operation = [ version |-> client_request.version
-                                                                                                               , content |-> client_request.content
-                                                                                                               , seqno   |-> next_seqno
-                                                                                                               , type    |-> INDEX
-                                                                                                               ]]
-                                       /\ replication_requests' =                     replication_requests
-                                                                  \union {lucenes'[PrimaryLuceneName].buffered_operation}
-                                  ELSE /\ IF client_request.type = DELETE
-                                             THEN /\ lucenes' = [lucenes EXCEPT ![PrimaryLuceneName].buffered_operation = [ type |-> DELETE ]]
-                                                  /\ replication_requests' =                     replication_requests
-                                                                             \union { [ type |-> DELETE, seqno |-> next_seqno ]}
-                                             ELSE /\ TRUE
-                                                  /\ UNCHANGED << replication_requests, 
-                                                                  lucenes >>
-                            /\ next_seqno' = next_seqno + 1
-                       /\ pc' = [pc EXCEPT !["PrimaryEngine"] = "PrimaryLoop"]
-                       /\ UNCHANGED << initial_client_requests, primaryActive >>
+                            /\ IF \/ client_request.version = NULL
+                                  \/ client_request.version > highest_document_version
+                                  THEN /\ highest_document_version' = (IF client_request.version = NULL
+                                                                       THEN highest_document_version + 1
+                                                                       ELSE client_request.version)
+                                       /\ \E replication_message_duplicates \in {1,2}:
+                                            /\ IF client_request.type = INDEX
+                                                  THEN /\ document' = [ version |-> highest_document_version'
+                                                                      , seqno   |-> next_seqno
+                                                                      , content |-> client_request.content
+                                                                      ]
+                                                       /\ replication_requests' =                     replication_requests
+                                                                                  \union {[ version |-> highest_document_version'
+                                                                                          , seqno   |-> next_seqno
+                                                                                          , content |-> client_request.content
+                                                                                          , type    |-> INDEX
+                                                                                          , count   |-> replication_message_duplicates
+                                                                                          ]}
+                                                  ELSE /\ IF client_request.type = DELETE
+                                                             THEN /\ document' = NULL
+                                                                  /\ replication_requests' =                     replication_requests
+                                                                                             \union {[ seqno   |-> next_seqno
+                                                                                                     , type    |-> DELETE
+                                                                                                     , count   |-> replication_message_duplicates
+                                                                                                     ]}
+                                                             ELSE /\ TRUE
+                                                                  /\ UNCHANGED << replication_requests, 
+                                                                                  document >>
+                                            /\ next_seqno' = next_seqno + 1
+                                  ELSE /\ TRUE
+                                       /\ UNCHANGED << replication_requests, 
+                                                       next_seqno, document, 
+                                                       highest_document_version >>
+                       /\ pc' = [pc EXCEPT !["ReplicationRequestGenerator"] = "PrimaryLoop"]
+                       /\ UNCHANGED << initial_client_requests, 
+                                       isGeneratingRequests, lucene, 
+                                       local_check_point, 
+                                       seqnos_above_local_check_point, 
+                                       max_seqno_for_document_in_version_map >>
 
-PrimaryEngineProcess == PrimaryLoop \/ HandleClientRequest
+ReplicationRequestGeneratorProcess == PrimaryLoop \/ HandleClientRequest
+
+LuceneLoop == /\ pc["ReplicaLucene"] = "LuceneLoop"
+              /\ IF lucene.state /= CLOSED \/ lucene.buffered_operation /= NULL
+                    THEN /\ lucene.buffered_operation /= NULL
+                         /\ pc' = [pc EXCEPT !["ReplicaLucene"] = "LuceneRefresh"]
+                    ELSE /\ pc' = [pc EXCEPT !["ReplicaLucene"] = "Done"]
+              /\ UNCHANGED << initial_client_requests, client_requests, 
+                              replication_requests, isGeneratingRequests, 
+                              lucene, next_seqno, document, 
+                              highest_document_version, local_check_point, 
+                              seqnos_above_local_check_point, 
+                              max_seqno_for_document_in_version_map >>
+
+LuceneRefresh == /\ pc["ReplicaLucene"] = "LuceneRefresh"
+                 /\ lucene' =       [lucene EXCEPT
+                              !.document =
+                                  CASE lucene.buffered_operation.type = INDEX
+                                  -> [ version |-> lucene.buffered_operation.version
+                                     , seqno   |-> lucene.buffered_operation.seqno
+                                     , content |-> lucene.buffered_operation.content
+                                     ]
+                                    [] lucene.buffered_operation.type = DELETE
+                                  -> NULL,
+                              !.buffered_operation = NULL
+                              ]
+                 /\ pc' = [pc EXCEPT !["ReplicaLucene"] = "LuceneLoop"]
+                 /\ UNCHANGED << initial_client_requests, client_requests, 
+                                 replication_requests, isGeneratingRequests, 
+                                 next_seqno, document, 
+                                 highest_document_version, local_check_point, 
+                                 seqnos_above_local_check_point, 
+                                 max_seqno_for_document_in_version_map >>
+
+LuceneProcess == LuceneLoop \/ LuceneRefresh
+
+ReplicaStart == /\ pc["ReplicaEngine"] = "ReplicaStart"
+                /\ ~ isGeneratingRequests
+                /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "ReplicaLoop"]
+                /\ UNCHANGED << initial_client_requests, client_requests, 
+                                replication_requests, isGeneratingRequests, 
+                                lucene, next_seqno, document, 
+                                highest_document_version, local_check_point, 
+                                seqnos_above_local_check_point, 
+                                max_seqno_for_document_in_version_map >>
 
 ReplicaLoop == /\ pc["ReplicaEngine"] = "ReplicaLoop"
-               /\ IF primaryActive \/ replication_requests /= {}
-                     THEN /\ replication_requests /= {}
-                          /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "HandleReplicationRequest"]
-                          /\ UNCHANGED lucenes
-                     ELSE /\ lucenes' = [lucenes EXCEPT ![ReplicaLuceneName].state = CLOSED]
+               /\ IF replication_requests /= {}
+                     THEN /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "HandleReplicationRequest"]
+                          /\ UNCHANGED lucene
+                     ELSE /\ lucene' = [lucene EXCEPT !.state = CLOSED]
                           /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "Done"]
                /\ UNCHANGED << initial_client_requests, client_requests, 
-                               replication_requests, primaryActive, next_seqno >>
+                               replication_requests, isGeneratingRequests, 
+                               next_seqno, document, highest_document_version, 
+                               local_check_point, 
+                               seqnos_above_local_check_point, 
+                               max_seqno_for_document_in_version_map >>
 
 HandleReplicationRequest == /\ pc["ReplicaEngine"] = "HandleReplicationRequest"
                             /\ \E replication_request \in replication_requests:
-                                 /\ replication_requests' = replication_requests \ {replication_request}
-                                 /\ IF replication_request.type = INDEX
-                                       THEN /\ lucenes' = [lucenes EXCEPT ![ReplicaLuceneName].buffered_operation = replication_request]
-                                       ELSE /\ IF replication_request.type = DELETE
-                                                  THEN /\ lucenes' = [lucenes EXCEPT ![ReplicaLuceneName].buffered_operation = [ type |-> DELETE ]]
-                                                  ELSE /\ TRUE
-                                                       /\ UNCHANGED lucenes
+                                 /\ replication_requests' =                     (replication_requests \ {replication_request})
+                                                            \union IF replication_request.count > 1
+                                                                   THEN {[replication_request EXCEPT !.count = replication_request.count - 1]}
+                                                                   ELSE {}
+                                 /\ IF \/ replication_request.seqno <= local_check_point
+                                       \/ /\ max_seqno_for_document_in_version_map /= NULL
+                                          /\ replication_request.seqno <= max_seqno_for_document_in_version_map
+                                       THEN /\ TRUE
+                                            /\ UNCHANGED << lucene, 
+                                                            local_check_point, 
+                                                            seqnos_above_local_check_point, 
+                                                            max_seqno_for_document_in_version_map >>
+                                       ELSE /\ IF replication_request.type = INDEX
+                                                  THEN /\ lucene' = [lucene EXCEPT !.buffered_operation = replication_request]
+                                                  ELSE /\ IF replication_request.type = DELETE
+                                                             THEN /\ lucene' = [lucene EXCEPT !.buffered_operation = [ type |-> DELETE ]]
+                                                             ELSE /\ TRUE
+                                                                  /\ UNCHANGED lucene
+                                            /\ IF replication_request.seqno > local_check_point + 1
+                                                  THEN /\ seqnos_above_local_check_point' =                               seqnos_above_local_check_point
+                                                                                            \union {replication_request.seqno}
+                                                       /\ UNCHANGED local_check_point
+                                                  ELSE /\ local_check_point' = (CHOOSE n \in (local_check_point .. local_check_point + 100):
+                                                                                           /\ n > local_check_point
+                                                                                           /\ ((local_check_point + 2) .. n) \subseteq seqnos_above_local_check_point
+                                                                                           /\ (n + 1) \notin seqnos_above_local_check_point)
+                                                       /\ seqnos_above_local_check_point' = { n \in seqnos_above_local_check_point: local_check_point' < n }
+                                            /\ IF replication_request.seqno <= local_check_point'
+                                                  THEN /\ max_seqno_for_document_in_version_map' = NULL
+                                                  ELSE /\ max_seqno_for_document_in_version_map' = replication_request.seqno
                             /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "ReplicaLoop"]
                             /\ UNCHANGED << initial_client_requests, 
-                                            client_requests, primaryActive, 
-                                            next_seqno >>
+                                            client_requests, 
+                                            isGeneratingRequests, next_seqno, 
+                                            document, highest_document_version >>
 
-ReplicaEngineProcess == ReplicaLoop \/ HandleReplicationRequest
+ReplicaEngineProcess == ReplicaStart \/ ReplicaLoop
+                           \/ HandleReplicationRequest
 
-Next == PrimaryEngineProcess \/ ReplicaEngineProcess
-           \/ (\E self \in LuceneNames: LuceneProcess(self))
+Next == ReplicationRequestGeneratorProcess \/ LuceneProcess
+           \/ ReplicaEngineProcess
            \/ (* Disjunct to prevent deadlock on termination *)
               ((\A self \in ProcSet: pc[self] = "Done") /\ UNCHANGED vars)
 
@@ -235,11 +370,14 @@ Terminated == \A self \in ProcSet: pc[self] = "Done"
 
 NoClientRequestsAtTermination      == Terminated => client_requests = {}
 NoReplicationRequestsAtTermination == Terminated => replication_requests = {}
-EmptyBuffersAtTermination          == Terminated => (\A lucene \in LuceneNames: lucenes[lucene].buffered_operation = NULL)
-EqualStatesAtTermination           == Terminated => (\A lucene \in LuceneNames: lucenes[lucene].document = lucenes[PrimaryLuceneName].document)
+EmptyBuffersAtTermination          == Terminated => lucene.buffered_operation = NULL
+EqualStatesAtTermination           == Terminated => lucene.document = document
 
+CannotAdvanceLocalCheckPoint == (\A n \in seqnos_above_local_check_point: local_check_point + 1 < n)
+VersionMapContainsNoEntriesBeforeLocalCheckPoint == \/ max_seqno_for_document_in_version_map = NULL
+                                                    \/ max_seqno_for_document_in_version_map > local_check_point
 
 =============================================================================
 \* Modification History
-\* Last modified Wed Feb 14 11:10:10 GMT 2018 by davidturner
+\* Last modified Wed Feb 14 14:28:02 GMT 2018 by davidturner
 \* Created Tue Feb 13 13:02:51 GMT 2018 by davidturner
