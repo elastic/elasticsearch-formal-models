@@ -16,7 +16,7 @@ ClientRequestType == {
 (* --algorithm basic
 
 variables
-    initial_client_requests \in {x \in SUBSET ClientRequestType: Cardinality(x) <= 4},
+    initial_client_requests \in {x \in SUBSET ClientRequestType: Cardinality(x) <= 5},
     client_requests = initial_client_requests,
     replication_requests = {},
     isGeneratingRequests = TRUE,
@@ -97,6 +97,7 @@ begin
                 -> NULL,
             !.buffered_operation = NULL
             ];
+        indexing_seqno := NULL;
     end while;
 end process;
 
@@ -104,7 +105,8 @@ process ReplicaEngineProcess = "ReplicaEngine"
 variables
     local_check_point = 0, (* have processed _all_ operations <= local_check_point *)
     seqnos_above_local_check_point = {},
-    max_seqno_for_document_in_version_map = NULL,
+    deletion_seqno = NULL,
+    indexing_seqno = NULL,
 begin
     ReplicaStart:
     await ~ isGeneratingRequests;
@@ -121,21 +123,17 @@ begin
                        ELSE {};
 
             if \/ replication_request.seqno <= local_check_point
-               \/ /\ max_seqno_for_document_in_version_map /= NULL
-                  /\ replication_request.seqno <= max_seqno_for_document_in_version_map
+               \/ /\ deletion_seqno /= NULL
+                  /\ replication_request.seqno <= deletion_seqno
+               \/ /\ indexing_seqno /= NULL
+                  /\ replication_request.seqno <= indexing_seqno
+               \/ /\ lucene.document /= NULL
+                  /\ replication_request.seqno <= lucene.document.seqno
             then
                 skip;
             
             else
                         
-                if replication_request.type = INDEX
-                then
-                    lucene.buffered_operation := replication_request;
-                elsif replication_request.type = DELETE
-                then
-                    lucene.buffered_operation := [ type |-> DELETE ];
-                end if;
-                
                 if replication_request.seqno > local_check_point + 1
                 then
                     (* cannot advance local check point *)
@@ -145,16 +143,41 @@ begin
                     (* advance local check point *)
                     local_check_point := CHOOSE n \in (local_check_point .. local_check_point + 100):
                                                     /\ n > local_check_point
-                                                    /\ ((local_check_point + 2) .. n) \subseteq seqnos_above_local_check_point
-                                                    /\ (n + 1) \notin seqnos_above_local_check_point;
+                                                    /\ (n + 1) \notin seqnos_above_local_check_point
+                                                    /\ ((local_check_point + 2) .. n) \subseteq seqnos_above_local_check_point;
                     seqnos_above_local_check_point := { n \in seqnos_above_local_check_point: local_check_point < n };
                 end if;
-
-                if replication_request.seqno <= local_check_point
-                then 
-                    max_seqno_for_document_in_version_map := NULL;
-                else
-                    max_seqno_for_document_in_version_map := replication_request.seqno;
+                        
+                if replication_request.type = INDEX
+                then
+                    lucene.buffered_operation := replication_request;
+                    if replication_request.seqno <= local_check_point
+                    then 
+                        indexing_seqno := NULL;
+                    else
+                        indexing_seqno := replication_request.seqno;
+                    end if;
+                    
+                    if deletion_seqno /= NULL /\ deletion_seqno <= local_check_point
+                    then
+                        deletion_seqno := NULL;
+                    end if;
+                    
+                elsif replication_request.type = DELETE
+                then
+                    lucene.buffered_operation := [ type |-> DELETE ];
+                    if replication_request.seqno <= local_check_point
+                    then 
+                        deletion_seqno := NULL;
+                    else
+                        deletion_seqno := replication_request.seqno;
+                    end if;
+                                       
+                    if indexing_seqno /= NULL /\ indexing_seqno <= local_check_point
+                    then 
+                        indexing_seqno := NULL;
+                    end if;
+                    
                 end if;
             end if;
         end with;
@@ -167,19 +190,17 @@ end algorithm *)
 VARIABLES initial_client_requests, client_requests, replication_requests, 
           isGeneratingRequests, lucene, pc, next_seqno, document, 
           highest_document_version, local_check_point, 
-          seqnos_above_local_check_point, 
-          max_seqno_for_document_in_version_map
+          seqnos_above_local_check_point, deletion_seqno, indexing_seqno
 
 vars == << initial_client_requests, client_requests, replication_requests, 
            isGeneratingRequests, lucene, pc, next_seqno, document, 
            highest_document_version, local_check_point, 
-           seqnos_above_local_check_point, 
-           max_seqno_for_document_in_version_map >>
+           seqnos_above_local_check_point, deletion_seqno, indexing_seqno >>
 
 ProcSet == {"ReplicationRequestGenerator"} \cup {"ReplicaLucene"} \cup {"ReplicaEngine"}
 
 Init == (* Global variables *)
-        /\ initial_client_requests \in {x \in SUBSET ClientRequestType: Cardinality(x) <= 4}
+        /\ initial_client_requests \in {x \in SUBSET ClientRequestType: Cardinality(x) <= 5}
         /\ client_requests = initial_client_requests
         /\ replication_requests = {}
         /\ isGeneratingRequests = TRUE
@@ -194,7 +215,8 @@ Init == (* Global variables *)
         (* Process ReplicaEngineProcess *)
         /\ local_check_point = 0
         /\ seqnos_above_local_check_point = {}
-        /\ max_seqno_for_document_in_version_map = NULL
+        /\ deletion_seqno = NULL
+        /\ indexing_seqno = NULL
         /\ pc = [self \in ProcSet |-> CASE self = "ReplicationRequestGenerator" -> "PrimaryLoop"
                                         [] self = "ReplicaLucene" -> "LuceneLoop"
                                         [] self = "ReplicaEngine" -> "ReplicaStart"]
@@ -209,8 +231,8 @@ PrimaryLoop == /\ pc["ReplicationRequestGenerator"] = "PrimaryLoop"
                                replication_requests, lucene, next_seqno, 
                                document, highest_document_version, 
                                local_check_point, 
-                               seqnos_above_local_check_point, 
-                               max_seqno_for_document_in_version_map >>
+                               seqnos_above_local_check_point, deletion_seqno, 
+                               indexing_seqno >>
 
 HandleClientRequest == /\ pc["ReplicationRequestGenerator"] = "HandleClientRequest"
                        /\ \E client_request \in client_requests:
@@ -253,7 +275,7 @@ HandleClientRequest == /\ pc["ReplicationRequestGenerator"] = "HandleClientReque
                                        isGeneratingRequests, lucene, 
                                        local_check_point, 
                                        seqnos_above_local_check_point, 
-                                       max_seqno_for_document_in_version_map >>
+                                       deletion_seqno, indexing_seqno >>
 
 ReplicationRequestGeneratorProcess == PrimaryLoop \/ HandleClientRequest
 
@@ -266,8 +288,8 @@ LuceneLoop == /\ pc["ReplicaLucene"] = "LuceneLoop"
                               replication_requests, isGeneratingRequests, 
                               lucene, next_seqno, document, 
                               highest_document_version, local_check_point, 
-                              seqnos_above_local_check_point, 
-                              max_seqno_for_document_in_version_map >>
+                              seqnos_above_local_check_point, deletion_seqno, 
+                              indexing_seqno >>
 
 LuceneRefresh == /\ pc["ReplicaLucene"] = "LuceneRefresh"
                  /\ lucene' =       [lucene EXCEPT
@@ -281,13 +303,14 @@ LuceneRefresh == /\ pc["ReplicaLucene"] = "LuceneRefresh"
                                   -> NULL,
                               !.buffered_operation = NULL
                               ]
+                 /\ indexing_seqno' = NULL
                  /\ pc' = [pc EXCEPT !["ReplicaLucene"] = "LuceneLoop"]
                  /\ UNCHANGED << initial_client_requests, client_requests, 
                                  replication_requests, isGeneratingRequests, 
                                  next_seqno, document, 
                                  highest_document_version, local_check_point, 
                                  seqnos_above_local_check_point, 
-                                 max_seqno_for_document_in_version_map >>
+                                 deletion_seqno >>
 
 LuceneProcess == LuceneLoop \/ LuceneRefresh
 
@@ -298,8 +321,8 @@ ReplicaStart == /\ pc["ReplicaEngine"] = "ReplicaStart"
                                 replication_requests, isGeneratingRequests, 
                                 lucene, next_seqno, document, 
                                 highest_document_version, local_check_point, 
-                                seqnos_above_local_check_point, 
-                                max_seqno_for_document_in_version_map >>
+                                seqnos_above_local_check_point, deletion_seqno, 
+                                indexing_seqno >>
 
 ReplicaLoop == /\ pc["ReplicaEngine"] = "ReplicaLoop"
                /\ IF replication_requests /= {}
@@ -311,8 +334,8 @@ ReplicaLoop == /\ pc["ReplicaEngine"] = "ReplicaLoop"
                                replication_requests, isGeneratingRequests, 
                                next_seqno, document, highest_document_version, 
                                local_check_point, 
-                               seqnos_above_local_check_point, 
-                               max_seqno_for_document_in_version_map >>
+                               seqnos_above_local_check_point, deletion_seqno, 
+                               indexing_seqno >>
 
 HandleReplicationRequest == /\ pc["ReplicaEngine"] = "HandleReplicationRequest"
                             /\ \E replication_request \in replication_requests:
@@ -321,31 +344,49 @@ HandleReplicationRequest == /\ pc["ReplicaEngine"] = "HandleReplicationRequest"
                                                                    THEN {[replication_request EXCEPT !.count = replication_request.count - 1]}
                                                                    ELSE {}
                                  /\ IF \/ replication_request.seqno <= local_check_point
-                                       \/ /\ max_seqno_for_document_in_version_map /= NULL
-                                          /\ replication_request.seqno <= max_seqno_for_document_in_version_map
+                                       \/ /\ deletion_seqno /= NULL
+                                          /\ replication_request.seqno <= deletion_seqno
+                                       \/ /\ indexing_seqno /= NULL
+                                          /\ replication_request.seqno <= indexing_seqno
+                                       \/ /\ lucene.document /= NULL
+                                          /\ replication_request.seqno <= lucene.document.seqno
                                        THEN /\ TRUE
                                             /\ UNCHANGED << lucene, 
                                                             local_check_point, 
                                                             seqnos_above_local_check_point, 
-                                                            max_seqno_for_document_in_version_map >>
-                                       ELSE /\ IF replication_request.type = INDEX
-                                                  THEN /\ lucene' = [lucene EXCEPT !.buffered_operation = replication_request]
-                                                  ELSE /\ IF replication_request.type = DELETE
-                                                             THEN /\ lucene' = [lucene EXCEPT !.buffered_operation = [ type |-> DELETE ]]
-                                                             ELSE /\ TRUE
-                                                                  /\ UNCHANGED lucene
-                                            /\ IF replication_request.seqno > local_check_point + 1
+                                                            deletion_seqno, 
+                                                            indexing_seqno >>
+                                       ELSE /\ IF replication_request.seqno > local_check_point + 1
                                                   THEN /\ seqnos_above_local_check_point' =                               seqnos_above_local_check_point
                                                                                             \union {replication_request.seqno}
                                                        /\ UNCHANGED local_check_point
                                                   ELSE /\ local_check_point' = (CHOOSE n \in (local_check_point .. local_check_point + 100):
                                                                                            /\ n > local_check_point
-                                                                                           /\ ((local_check_point + 2) .. n) \subseteq seqnos_above_local_check_point
-                                                                                           /\ (n + 1) \notin seqnos_above_local_check_point)
+                                                                                           /\ (n + 1) \notin seqnos_above_local_check_point
+                                                                                           /\ ((local_check_point + 2) .. n) \subseteq seqnos_above_local_check_point)
                                                        /\ seqnos_above_local_check_point' = { n \in seqnos_above_local_check_point: local_check_point' < n }
-                                            /\ IF replication_request.seqno <= local_check_point'
-                                                  THEN /\ max_seqno_for_document_in_version_map' = NULL
-                                                  ELSE /\ max_seqno_for_document_in_version_map' = replication_request.seqno
+                                            /\ IF replication_request.type = INDEX
+                                                  THEN /\ lucene' = [lucene EXCEPT !.buffered_operation = replication_request]
+                                                       /\ IF replication_request.seqno <= local_check_point'
+                                                             THEN /\ indexing_seqno' = NULL
+                                                             ELSE /\ indexing_seqno' = replication_request.seqno
+                                                       /\ IF deletion_seqno /= NULL /\ deletion_seqno <= local_check_point'
+                                                             THEN /\ deletion_seqno' = NULL
+                                                             ELSE /\ TRUE
+                                                                  /\ UNCHANGED deletion_seqno
+                                                  ELSE /\ IF replication_request.type = DELETE
+                                                             THEN /\ lucene' = [lucene EXCEPT !.buffered_operation = [ type |-> DELETE ]]
+                                                                  /\ IF replication_request.seqno <= local_check_point'
+                                                                        THEN /\ deletion_seqno' = NULL
+                                                                        ELSE /\ deletion_seqno' = replication_request.seqno
+                                                                  /\ IF indexing_seqno /= NULL /\ indexing_seqno <= local_check_point'
+                                                                        THEN /\ indexing_seqno' = NULL
+                                                                        ELSE /\ TRUE
+                                                                             /\ UNCHANGED indexing_seqno
+                                                             ELSE /\ TRUE
+                                                                  /\ UNCHANGED << lucene, 
+                                                                                  deletion_seqno, 
+                                                                                  indexing_seqno >>
                             /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "ReplicaLoop"]
                             /\ UNCHANGED << initial_client_requests, 
                                             client_requests, 
@@ -375,10 +416,12 @@ EmptyBuffersAtTermination          == Terminated => lucene.buffered_operation = 
 EqualStatesAtTermination           == Terminated => lucene.document = document
 
 CannotAdvanceLocalCheckPoint == (\A n \in seqnos_above_local_check_point: local_check_point + 1 < n)
-VersionMapContainsNoEntriesBeforeLocalCheckPoint == \/ max_seqno_for_document_in_version_map = NULL
-                                                    \/ max_seqno_for_document_in_version_map > local_check_point
+VersionMapContainsNoEntriesBeforeLocalCheckPoint == /\ \/ deletion_seqno = NULL
+                                                       \/ deletion_seqno > local_check_point
+                                                    /\ \/ indexing_seqno = NULL
+                                                       \/ indexing_seqno > local_check_point
 
 =============================================================================
 \* Modification History
-\* Last modified Wed Feb 14 14:33:22 GMT 2018 by davidturner
+\* Last modified Wed Feb 14 14:56:33 GMT 2018 by davidturner
 \* Created Tue Feb 13 13:02:51 GMT 2018 by davidturner
