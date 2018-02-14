@@ -368,7 +368,8 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 Terminated == \A self \in ProcSet: pc[self] = "Done"
 
-NoClientRequestsAtTermination      == Terminated => client_requests = {}
+NoClientRequestsAtTermination      == /\ isGeneratingRequests \/ client_requests = {}
+                                      /\ Terminated => ~ isGeneratingRequests
 NoReplicationRequestsAtTermination == Terminated => replication_requests = {}
 EmptyBuffersAtTermination          == Terminated => lucene.buffered_operation = NULL
 EqualStatesAtTermination           == Terminated => lucene.document = document
@@ -379,5 +380,5 @@ VersionMapContainsNoEntriesBeforeLocalCheckPoint == \/ max_seqno_for_document_in
 
 =============================================================================
 \* Modification History
-\* Last modified Wed Feb 14 14:28:02 GMT 2018 by davidturner
+\* Last modified Wed Feb 14 14:33:22 GMT 2018 by davidturner
 \* Created Tue Feb 13 13:02:51 GMT 2018 by davidturner
