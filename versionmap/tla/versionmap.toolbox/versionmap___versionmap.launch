@@ -18,7 +18,7 @@
 <stringAttribute key="modelBehaviorNext" value=""/>
 <stringAttribute key="modelBehaviorSpec" value="Spec"/>
 <intAttribute key="modelBehaviorSpecType" value="1"/>
-<stringAttribute key="modelBehaviorVars" value="initial_client_requests, local_check_point, seqnos_above_local_check_point, max_seqno_for_document_in_version_map, pc, client_requests, replication_requests, next_seqno, lucenes, primaryActive"/>
+<stringAttribute key="modelBehaviorVars" value="initial_client_requests, local_check_point, seqnos_above_local_check_point, lucene, pc, isGeneratingRequests, client_requests, replication_requests, next_seqno, append_only_unsafe_up_to, deletion_seqno, highest_document_version, indexing_seqno, replication_request, document"/>
 <stringAttribute key="modelComments" value=""/>
 <booleanAttribute key="modelCorrectnessCheckDeadlock" value="true"/>
 <listAttribute key="modelCorrectnessInvariants">
