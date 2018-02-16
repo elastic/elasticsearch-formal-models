@@ -163,13 +163,21 @@ begin
             if replication_request.append_only
             then
                 (* fast path *)
-                lucene.buffered_operation := replication_request;
+                lucene.buffered_operation := 
+                    [ type    |-> replication_request.type
+                    , seqno   |-> replication_request.seqno
+                    , content |-> replication_request.content
+                    ];
             else
                 append_only_unsafe_up_to := replication_request.seqno;
             
                 if replication_request.type = UPDATE
                 then
-                    lucene.buffered_operation := replication_request;
+                    lucene.buffered_operation :=
+                        [ type    |-> replication_request.type
+                        , seqno   |-> replication_request.seqno
+                        , content |-> replication_request.content
+                        ];
                     indexing_seqno := replication_request.seqno;    
                 elsif replication_request.type = DELETE
                 then
@@ -415,13 +423,19 @@ ReadyToApplyToLucene == /\ pc["ReplicaEngine"] = "ReadyToApplyToLucene"
                                       /\  indexing_seqno  = NULL \/ indexing_seqno        < replication_request.seqno
                                       /\  lucene.document = NULL \/ lucene.document.seqno < replication_request.seqno
                               THEN /\ IF replication_request.append_only
-                                         THEN /\ lucene' = [lucene EXCEPT !.buffered_operation = replication_request]
+                                         THEN /\ lucene' = [lucene EXCEPT !.buffered_operation = [ type    |-> replication_request.type
+                                                                                                 , seqno   |-> replication_request.seqno
+                                                                                                 , content |-> replication_request.content
+                                                                                                 ]]
                                               /\ UNCHANGED << deletion_seqno, 
                                                               indexing_seqno, 
                                                               append_only_unsafe_up_to >>
                                          ELSE /\ append_only_unsafe_up_to' = replication_request.seqno
                                               /\ IF replication_request.type = UPDATE
-                                                    THEN /\ lucene' = [lucene EXCEPT !.buffered_operation = replication_request]
+                                                    THEN /\ lucene' = [lucene EXCEPT !.buffered_operation = [ type    |-> replication_request.type
+                                                                                                            , seqno   |-> replication_request.seqno
+                                                                                                            , content |-> replication_request.content
+                                                                                                            ]]
                                                          /\ indexing_seqno' = replication_request.seqno
                                                          /\ UNCHANGED deletion_seqno
                                                     ELSE /\ IF replication_request.type = DELETE
@@ -500,5 +514,5 @@ VersionMapContainsNoEntriesBeforeLocalCheckPoint == /\ \/ deletion_seqno = NULL
 
 =============================================================================
 \* Modification History
-\* Last modified Fri Feb 16 16:34:03 GMT 2018 by davidturner
+\* Last modified Fri Feb 16 16:36:24 GMT 2018 by davidturner
 \* Created Tue Feb 13 13:02:51 GMT 2018 by davidturner
