@@ -4,17 +4,10 @@ EXTENDS Naturals, FiniteSets, Sequences, TLC
 CONSTANTS ADD, UPDATE, DELETE, NULL
 CONSTANTS OPEN, CLOSED
 
-ClientRequestType == 
-    {[type |-> UPDATE,  content |-> "A"]
-    ,[type |-> UPDATE,  content |-> "B"]
-    ,[type |-> DELETE]
-    }
 
 (* --algorithm basic
 
 variables
-    initial_client_requests \in {x \in SUBSET ClientRequestType: Cardinality(x) <= 5},
-    client_requests = initial_client_requests,
     replication_requests = {},
     isGeneratingRequests = TRUE,
     lucene =
@@ -27,9 +20,14 @@ process ReplicationRequestGeneratorProcess = "ReplicationRequestGenerator"
 variables
     next_seqno = 1,
     document = NULL,
+    request_count = NULL,
 begin
 
     GeneratorStart:
+    with tmp_request_count \in 1..4 do
+        request_count := tmp_request_count;
+    end with;
+    
     either
         skip;
     or
@@ -50,10 +48,11 @@ begin
     end either;
 
     GeneratorLoop:
-    while client_requests /= {} do
-        HandleClientRequest:
-        with client_request \in client_requests do
-            client_requests := client_requests \ {client_request};
+    while Cardinality(replication_requests) < request_count do
+        with client_request \in {[type |-> UPDATE,  content |-> "A"]
+                                ,[type |-> UPDATE,  content |-> "B"]
+                                ,[type |-> DELETE]
+                                } do
         
             with replication_message_duplicates \in {1,2} do
             
@@ -85,6 +84,7 @@ begin
             end with;
         end with;
     end while;
+
     isGeneratingRequests := FALSE;
 end process
 
@@ -213,21 +213,19 @@ end process
 
 end algorithm *)
 \* BEGIN TRANSLATION
-VARIABLES initial_client_requests, client_requests, replication_requests, 
-          isGeneratingRequests, lucene, pc, next_seqno, document, 
-          local_check_point, seqnos_above_local_check_point, deletion_seqno, 
-          indexing_seqno, append_only_unsafe_up_to, replication_request
+VARIABLES replication_requests, isGeneratingRequests, lucene, pc, next_seqno, 
+          document, request_count, local_check_point, 
+          seqnos_above_local_check_point, deletion_seqno, indexing_seqno, 
+          append_only_unsafe_up_to, replication_request
 
-vars == << initial_client_requests, client_requests, replication_requests, 
-           isGeneratingRequests, lucene, pc, next_seqno, document, 
-           local_check_point, seqnos_above_local_check_point, deletion_seqno, 
-           indexing_seqno, append_only_unsafe_up_to, replication_request >>
+vars == << replication_requests, isGeneratingRequests, lucene, pc, next_seqno, 
+           document, request_count, local_check_point, 
+           seqnos_above_local_check_point, deletion_seqno, indexing_seqno, 
+           append_only_unsafe_up_to, replication_request >>
 
 ProcSet == {"ReplicationRequestGenerator"} \cup {"ReplicaLucene"} \cup {"ReplicaEngine"}
 
 Init == (* Global variables *)
-        /\ initial_client_requests \in {x \in SUBSET ClientRequestType: Cardinality(x) <= 5}
-        /\ client_requests = initial_client_requests
         /\ replication_requests = {}
         /\ isGeneratingRequests = TRUE
         /\ lucene = [ document           |-> NULL
@@ -237,6 +235,7 @@ Init == (* Global variables *)
         (* Process ReplicationRequestGeneratorProcess *)
         /\ next_seqno = 1
         /\ document = NULL
+        /\ request_count = NULL
         (* Process ReplicaEngineProcess *)
         /\ local_check_point = 0
         /\ seqnos_above_local_check_point = {}
@@ -249,6 +248,8 @@ Init == (* Global variables *)
                                         [] self = "ReplicaEngine" -> "ReplicaStart"]
 
 GeneratorStart == /\ pc["ReplicationRequestGenerator"] = "GeneratorStart"
+                  /\ \E tmp_request_count \in 1..4:
+                       request_count' = tmp_request_count
                   /\ \/ /\ TRUE
                         /\ UNCHANGED <<replication_requests, next_seqno, document>>
                      \/ /\ document' = [ seqno   |-> next_seqno
@@ -264,8 +265,7 @@ GeneratorStart == /\ pc["ReplicationRequestGenerator"] = "GeneratorStart"
                                                              ]}
                         /\ next_seqno' = next_seqno + 1
                   /\ pc' = [pc EXCEPT !["ReplicationRequestGenerator"] = "GeneratorLoop"]
-                  /\ UNCHANGED << initial_client_requests, client_requests, 
-                                  isGeneratingRequests, lucene, 
+                  /\ UNCHANGED << isGeneratingRequests, lucene, 
                                   local_check_point, 
                                   seqnos_above_local_check_point, 
                                   deletion_seqno, indexing_seqno, 
@@ -273,65 +273,56 @@ GeneratorStart == /\ pc["ReplicationRequestGenerator"] = "GeneratorStart"
                                   replication_request >>
 
 GeneratorLoop == /\ pc["ReplicationRequestGenerator"] = "GeneratorLoop"
-                 /\ IF client_requests /= {}
-                       THEN /\ pc' = [pc EXCEPT !["ReplicationRequestGenerator"] = "HandleClientRequest"]
+                 /\ IF Cardinality(replication_requests) < request_count
+                       THEN /\ \E client_request \in {[type |-> UPDATE,  content |-> "A"]
+                                                     ,[type |-> UPDATE,  content |-> "B"]
+                                                     ,[type |-> DELETE]
+                                                     }:
+                                 \E replication_message_duplicates \in {1,2}:
+                                   /\ IF client_request.type = UPDATE
+                                         THEN /\ document' = [ seqno   |-> next_seqno
+                                                             , content |-> client_request.content
+                                                             ]
+                                              /\ replication_requests' =                     replication_requests
+                                                                         \union {[ seqno       |-> next_seqno
+                                                                                 , content     |-> client_request.content
+                                                                                 , type        |-> UPDATE
+                                                                                 , count       |-> replication_message_duplicates
+                                                                                 , append_only |-> FALSE
+                                                                                 ]}
+                                         ELSE /\ IF client_request.type = DELETE
+                                                    THEN /\ document' = NULL
+                                                         /\ replication_requests' =                     replication_requests
+                                                                                    \union {[ seqno       |-> next_seqno
+                                                                                            , type        |-> DELETE
+                                                                                            , count       |-> replication_message_duplicates
+                                                                                            , append_only |-> FALSE
+                                                                                            ]}
+                                                    ELSE /\ TRUE
+                                                         /\ UNCHANGED << replication_requests, 
+                                                                         document >>
+                                   /\ next_seqno' = next_seqno + 1
+                            /\ pc' = [pc EXCEPT !["ReplicationRequestGenerator"] = "GeneratorLoop"]
                             /\ UNCHANGED isGeneratingRequests
                        ELSE /\ isGeneratingRequests' = FALSE
                             /\ pc' = [pc EXCEPT !["ReplicationRequestGenerator"] = "Done"]
-                 /\ UNCHANGED << initial_client_requests, client_requests, 
-                                 replication_requests, lucene, next_seqno, 
-                                 document, local_check_point, 
+                            /\ UNCHANGED << replication_requests, next_seqno, 
+                                            document >>
+                 /\ UNCHANGED << lucene, request_count, local_check_point, 
                                  seqnos_above_local_check_point, 
                                  deletion_seqno, indexing_seqno, 
                                  append_only_unsafe_up_to, replication_request >>
 
-HandleClientRequest == /\ pc["ReplicationRequestGenerator"] = "HandleClientRequest"
-                       /\ \E client_request \in client_requests:
-                            /\ client_requests' = client_requests \ {client_request}
-                            /\ \E replication_message_duplicates \in {1,2}:
-                                 /\ IF client_request.type = UPDATE
-                                       THEN /\ document' = [ seqno   |-> next_seqno
-                                                           , content |-> client_request.content
-                                                           ]
-                                            /\ replication_requests' =                     replication_requests
-                                                                       \union {[ seqno       |-> next_seqno
-                                                                               , content     |-> client_request.content
-                                                                               , type        |-> UPDATE
-                                                                               , count       |-> replication_message_duplicates
-                                                                               , append_only |-> FALSE
-                                                                               ]}
-                                       ELSE /\ IF client_request.type = DELETE
-                                                  THEN /\ document' = NULL
-                                                       /\ replication_requests' =                     replication_requests
-                                                                                  \union {[ seqno       |-> next_seqno
-                                                                                          , type        |-> DELETE
-                                                                                          , count       |-> replication_message_duplicates
-                                                                                          , append_only |-> FALSE
-                                                                                          ]}
-                                                  ELSE /\ TRUE
-                                                       /\ UNCHANGED << replication_requests, 
-                                                                       document >>
-                                 /\ next_seqno' = next_seqno + 1
-                       /\ pc' = [pc EXCEPT !["ReplicationRequestGenerator"] = "GeneratorLoop"]
-                       /\ UNCHANGED << initial_client_requests, 
-                                       isGeneratingRequests, lucene, 
-                                       local_check_point, 
-                                       seqnos_above_local_check_point, 
-                                       deletion_seqno, indexing_seqno, 
-                                       append_only_unsafe_up_to, 
-                                       replication_request >>
-
 ReplicationRequestGeneratorProcess == GeneratorStart \/ GeneratorLoop
-                                         \/ HandleClientRequest
 
 LuceneLoop == /\ pc["ReplicaLucene"] = "LuceneLoop"
               /\ IF lucene.state /= CLOSED \/ lucene.buffered_operation /= NULL
                     THEN /\ lucene.buffered_operation /= NULL
                          /\ pc' = [pc EXCEPT !["ReplicaLucene"] = "LuceneRefresh"]
                     ELSE /\ pc' = [pc EXCEPT !["ReplicaLucene"] = "Done"]
-              /\ UNCHANGED << initial_client_requests, client_requests, 
-                              replication_requests, isGeneratingRequests, 
-                              lucene, next_seqno, document, local_check_point, 
+              /\ UNCHANGED << replication_requests, isGeneratingRequests, 
+                              lucene, next_seqno, document, request_count, 
+                              local_check_point, 
                               seqnos_above_local_check_point, deletion_seqno, 
                               indexing_seqno, append_only_unsafe_up_to, 
                               replication_request >>
@@ -349,9 +340,9 @@ LuceneRefresh == /\ pc["ReplicaLucene"] = "LuceneRefresh"
                               ]
                  /\ indexing_seqno' = NULL
                  /\ pc' = [pc EXCEPT !["ReplicaLucene"] = "LuceneLoop"]
-                 /\ UNCHANGED << initial_client_requests, client_requests, 
-                                 replication_requests, isGeneratingRequests, 
-                                 next_seqno, document, local_check_point, 
+                 /\ UNCHANGED << replication_requests, isGeneratingRequests, 
+                                 next_seqno, document, request_count, 
+                                 local_check_point, 
                                  seqnos_above_local_check_point, 
                                  deletion_seqno, append_only_unsafe_up_to, 
                                  replication_request >>
@@ -361,9 +352,8 @@ LuceneProcess == LuceneLoop \/ LuceneRefresh
 ReplicaStart == /\ pc["ReplicaEngine"] = "ReplicaStart"
                 /\ ~ isGeneratingRequests
                 /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "ReplicaLoop"]
-                /\ UNCHANGED << initial_client_requests, client_requests, 
-                                replication_requests, isGeneratingRequests, 
-                                lucene, next_seqno, document, 
+                /\ UNCHANGED << replication_requests, isGeneratingRequests, 
+                                lucene, next_seqno, document, request_count, 
                                 local_check_point, 
                                 seqnos_above_local_check_point, deletion_seqno, 
                                 indexing_seqno, append_only_unsafe_up_to, 
@@ -375,9 +365,9 @@ ReplicaLoop == /\ pc["ReplicaEngine"] = "ReplicaLoop"
                           /\ UNCHANGED lucene
                      ELSE /\ lucene' = [lucene EXCEPT !.state = CLOSED]
                           /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "Done"]
-               /\ UNCHANGED << initial_client_requests, client_requests, 
-                               replication_requests, isGeneratingRequests, 
-                               next_seqno, document, local_check_point, 
+               /\ UNCHANGED << replication_requests, isGeneratingRequests, 
+                               next_seqno, document, request_count, 
+                               local_check_point, 
                                seqnos_above_local_check_point, deletion_seqno, 
                                indexing_seqno, append_only_unsafe_up_to, 
                                replication_request >>
@@ -394,9 +384,8 @@ GetReplicationRequest == /\ pc["ReplicaEngine"] = "GetReplicationRequest"
                                /\ replication_request'.seqno < append_only_unsafe_up_to
                                THEN /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "AwaitingRefresh"]
                                ELSE /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "ReadyToApplyToLucene"]
-                         /\ UNCHANGED << initial_client_requests, 
-                                         client_requests, isGeneratingRequests, 
-                                         lucene, next_seqno, document, 
+                         /\ UNCHANGED << isGeneratingRequests, lucene, 
+                                         next_seqno, document, request_count, 
                                          local_check_point, 
                                          seqnos_above_local_check_point, 
                                          deletion_seqno, indexing_seqno, 
@@ -406,9 +395,8 @@ AwaitingRefresh == /\ pc["ReplicaEngine"] = "AwaitingRefresh"
                    /\ lucene.buffered_operation = NULL
                    /\ TRUE
                    /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "ReadyToApplyToLucene"]
-                   /\ UNCHANGED << initial_client_requests, client_requests, 
-                                   replication_requests, isGeneratingRequests, 
-                                   lucene, next_seqno, document, 
+                   /\ UNCHANGED << replication_requests, isGeneratingRequests, 
+                                   lucene, next_seqno, document, request_count, 
                                    local_check_point, 
                                    seqnos_above_local_check_point, 
                                    deletion_seqno, indexing_seqno, 
@@ -455,11 +443,10 @@ ReadyToApplyToLucene == /\ pc["ReplicaEngine"] = "ReadyToApplyToLucene"
                                                    deletion_seqno, 
                                                    indexing_seqno, 
                                                    append_only_unsafe_up_to >>
-                        /\ UNCHANGED << initial_client_requests, 
-                                        client_requests, replication_requests, 
+                        /\ UNCHANGED << replication_requests, 
                                         isGeneratingRequests, next_seqno, 
-                                        document, local_check_point, 
-                                        replication_request >>
+                                        document, request_count, 
+                                        local_check_point, replication_request >>
 
 AdvanceLocalCheckPoint == /\ pc["ReplicaEngine"] = "AdvanceLocalCheckPoint"
                           /\ local_check_point' = (CHOOSE n \in (local_check_point .. next_seqno):
@@ -476,11 +463,9 @@ AdvanceLocalCheckPoint == /\ pc["ReplicaEngine"] = "AdvanceLocalCheckPoint"
                                 ELSE /\ TRUE
                                      /\ UNCHANGED indexing_seqno
                           /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "ReplicaLoop"]
-                          /\ UNCHANGED << initial_client_requests, 
-                                          client_requests, 
-                                          replication_requests, 
+                          /\ UNCHANGED << replication_requests, 
                                           isGeneratingRequests, lucene, 
-                                          next_seqno, document, 
+                                          next_seqno, document, request_count, 
                                           append_only_unsafe_up_to, 
                                           replication_request >>
 
@@ -502,8 +487,7 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 Terminated == \A self \in ProcSet: pc[self] = "Done"
 
-NoClientRequestsAtTermination      == /\ isGeneratingRequests \/ client_requests = {}
-                                      /\ Terminated => ~ isGeneratingRequests
+NoClientRequestsAtTermination      == Terminated => ~ isGeneratingRequests
 NoReplicationRequestsAtTermination == Terminated => replication_requests = {}
 EmptyBuffersAtTermination          == Terminated => lucene.buffered_operation = NULL
 EqualStatesAtTermination           == Terminated => lucene.document = document
@@ -516,5 +500,5 @@ VersionMapContainsNoEntriesBeforeLocalCheckPoint == /\ \/ deletion_seqno = NULL
 
 =============================================================================
 \* Modification History
-\* Last modified Fri Feb 16 16:27:30 GMT 2018 by davidturner
+\* Last modified Fri Feb 16 16:34:03 GMT 2018 by davidturner
 \* Created Tue Feb 13 13:02:51 GMT 2018 by davidturner
