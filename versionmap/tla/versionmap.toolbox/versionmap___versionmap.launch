@@ -18,7 +18,7 @@
 <stringAttribute key="modelBehaviorNext" value=""/>
 <stringAttribute key="modelBehaviorSpec" value="Spec"/>
 <intAttribute key="modelBehaviorSpecType" value="1"/>
-<stringAttribute key="modelBehaviorVars" value="initial_client_requests, local_check_point, seqnos_above_local_check_point, lucene, pc, isGeneratingRequests, client_requests, replication_requests, next_seqno, append_only_unsafe_up_to, deletion_seqno, highest_document_version, indexing_seqno, replication_request, document"/>
+<stringAttribute key="modelBehaviorVars" value="initial_client_requests, local_check_point, seqnos_above_local_check_point, lucene, pc, isGeneratingRequests, client_requests, replication_requests, next_seqno, append_only_unsafe_up_to, deletion_seqno, indexing_seqno, replication_request, document"/>
 <stringAttribute key="modelComments" value=""/>
 <booleanAttribute key="modelCorrectnessCheckDeadlock" value="true"/>
 <listAttribute key="modelCorrectnessInvariants">
@@ -37,9 +37,10 @@
 <listAttribute key="modelParameterConstants">
 <listEntry value="NULL;;NULL;1;0"/>
 <listEntry value="DELETE;;DELETE;1;0"/>
-<listEntry value="INDEX;;INDEX;1;0"/>
 <listEntry value="CLOSED;;CLOSED;1;0"/>
 <listEntry value="OPEN;;OPEN;1;0"/>
+<listEntry value="UPDATE;;UPDATE;1;0"/>
+<listEntry value="ADD;;ADD;1;0"/>
 </listAttribute>
 <stringAttribute key="modelParameterContraint" value=""/>
 <listAttribute key="modelParameterDefinitions"/>

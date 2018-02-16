@@ -1,12 +1,12 @@
 ----------------------------- MODULE versionmap -----------------------------
 EXTENDS Naturals, FiniteSets, Sequences, TLC
 
-CONSTANTS INDEX, DELETE, NULL
+CONSTANTS ADD, UPDATE, DELETE, NULL
 CONSTANTS OPEN, CLOSED
 
 ClientRequestType == 
-    {[type |-> INDEX,  content |-> "A"]
-    ,[type |-> INDEX,  content |-> "B"]
+    {[type |-> UPDATE,  content |-> "A"]
+    ,[type |-> UPDATE,  content |-> "B"]
     ,[type |-> DELETE]
     }
 
@@ -41,7 +41,7 @@ begin
             replication_requests := replication_requests
                 \union {[ seqno       |-> next_seqno
                         , content     |-> "NEW"
-                        , type        |-> INDEX
+                        , type        |-> UPDATE
                         , count       |-> replication_message_duplicates
                         , append_only |-> TRUE
                         ]};
@@ -57,7 +57,7 @@ begin
         
             with replication_message_duplicates \in {1,2} do
             
-                if client_request.type = INDEX
+                if client_request.type = UPDATE
                 then
                     document := [ seqno   |-> next_seqno
                                 , content |-> client_request.content
@@ -65,7 +65,7 @@ begin
                     replication_requests := replication_requests
                         \union {[ seqno       |-> next_seqno
                                 , content     |-> client_request.content
-                                , type        |-> INDEX
+                                , type        |-> UPDATE
                                 , count       |-> replication_message_duplicates
                                 , append_only |-> FALSE
                                 ]};
@@ -96,7 +96,7 @@ begin
         LuceneRefresh:
         lucene := [lucene EXCEPT
             !.document =
-                CASE lucene.buffered_operation.type = INDEX
+                CASE lucene.buffered_operation.type = UPDATE
                 -> [ seqno   |-> lucene.buffered_operation.seqno
                    , content |-> lucene.buffered_operation.content
                    ]
@@ -167,7 +167,7 @@ begin
             else
                 append_only_unsafe_up_to := replication_request.seqno;
             
-                if replication_request.type = INDEX
+                if replication_request.type = UPDATE
                 then
                     lucene.buffered_operation := replication_request;
                     indexing_seqno := replication_request.seqno;    
@@ -258,7 +258,7 @@ GeneratorStart == /\ pc["ReplicationRequestGenerator"] = "GeneratorStart"
                              replication_requests' =                     replication_requests
                                                      \union {[ seqno       |-> next_seqno
                                                              , content     |-> "NEW"
-                                                             , type        |-> INDEX
+                                                             , type        |-> UPDATE
                                                              , count       |-> replication_message_duplicates
                                                              , append_only |-> TRUE
                                                              ]}
@@ -289,14 +289,14 @@ HandleClientRequest == /\ pc["ReplicationRequestGenerator"] = "HandleClientReque
                        /\ \E client_request \in client_requests:
                             /\ client_requests' = client_requests \ {client_request}
                             /\ \E replication_message_duplicates \in {1,2}:
-                                 /\ IF client_request.type = INDEX
+                                 /\ IF client_request.type = UPDATE
                                        THEN /\ document' = [ seqno   |-> next_seqno
                                                            , content |-> client_request.content
                                                            ]
                                             /\ replication_requests' =                     replication_requests
                                                                        \union {[ seqno       |-> next_seqno
                                                                                , content     |-> client_request.content
-                                                                               , type        |-> INDEX
+                                                                               , type        |-> UPDATE
                                                                                , count       |-> replication_message_duplicates
                                                                                , append_only |-> FALSE
                                                                                ]}
@@ -339,7 +339,7 @@ LuceneLoop == /\ pc["ReplicaLucene"] = "LuceneLoop"
 LuceneRefresh == /\ pc["ReplicaLucene"] = "LuceneRefresh"
                  /\ lucene' =       [lucene EXCEPT
                               !.document =
-                                  CASE lucene.buffered_operation.type = INDEX
+                                  CASE lucene.buffered_operation.type = UPDATE
                                   -> [ seqno   |-> lucene.buffered_operation.seqno
                                      , content |-> lucene.buffered_operation.content
                                      ]
@@ -432,7 +432,7 @@ ReadyToApplyToLucene == /\ pc["ReplicaEngine"] = "ReadyToApplyToLucene"
                                                               indexing_seqno, 
                                                               append_only_unsafe_up_to >>
                                          ELSE /\ append_only_unsafe_up_to' = replication_request.seqno
-                                              /\ IF replication_request.type = INDEX
+                                              /\ IF replication_request.type = UPDATE
                                                     THEN /\ lucene' = [lucene EXCEPT !.buffered_operation = replication_request]
                                                          /\ indexing_seqno' = replication_request.seqno
                                                          /\ UNCHANGED deletion_seqno
@@ -516,5 +516,5 @@ VersionMapContainsNoEntriesBeforeLocalCheckPoint == /\ \/ deletion_seqno = NULL
 
 =============================================================================
 \* Modification History
-\* Last modified Fri Feb 16 16:23:07 GMT 2018 by davidturner
+\* Last modified Fri Feb 16 16:27:30 GMT 2018 by davidturner
 \* Created Tue Feb 13 13:02:51 GMT 2018 by davidturner
