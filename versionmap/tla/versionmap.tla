@@ -67,8 +67,8 @@ begin
                                 , count       |-> replication_message_duplicates
                                 ]};
                 
-                elsif client_request.type = DELETE
-                then
+                else
+                    assert client_request.type = DELETE;
                     document := NULL;
                     replication_requests := replication_requests
                         \union {[ seqno       |-> next_seqno
@@ -179,8 +179,8 @@ begin
                         , content |-> replication_request.content
                         ];
                 indexing_seqno := replication_request.seqno;   
-            elsif replication_request.type = DELETE
-            then
+            else
+                assert replication_request.type = DELETE;
                 append_only_unsafe_up_to := replication_request.seqno;
                 lucene.buffered_operation := [ type |-> DELETE ];
                 deletion_seqno := replication_request.seqno;
