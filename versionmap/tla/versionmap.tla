@@ -27,43 +27,32 @@ begin
     with tmp_request_count \in 1..4 do
         request_count := tmp_request_count;
     end with;
-    
-    either
-        skip;
-    or
-        document := [ seqno   |-> next_seqno
-                    , content |-> "NEW"
-                    ];
-                    
-        with replication_message_duplicates \in {1,2} do
-            replication_requests := replication_requests
-                \union {[ seqno       |-> next_seqno
-                        , content     |-> "NEW"
-                        , type        |-> ADD
-                        , count       |-> replication_message_duplicates
-                        ]};
-        end with;
-        next_seqno := next_seqno + 1;
-    end either;
 
     GeneratorLoop:
     while Cardinality(replication_requests) < request_count do
         with client_request \in {[type |-> UPDATE,  content |-> "A"]
                                 ,[type |-> UPDATE,  content |-> "B"]
                                 ,[type |-> DELETE]
-                                } do
+                                } \union
+                                
+                                IF \E req \in replication_requests : req.type = ADD
+                                THEN {}
+                                ELSE {[type |-> ADD, content |-> "NEW"]}
+                                
+                                do
         
-            with replication_message_duplicates \in {1,2} do
+            with replication_message_duplicates \in IF client_request.type = ADD THEN {1} ELSE {1,2} do
             
-                if client_request.type = UPDATE
+                if client_request.type = UPDATE \/ client_request.type = ADD
                 then
+                    await client_request.type = UPDATE \/ next_seqno = 1;
                     document := [ seqno   |-> next_seqno
                                 , content |-> client_request.content
                                 ];
                     replication_requests := replication_requests
                         \union {[ seqno       |-> next_seqno
                                 , content     |-> client_request.content
-                                , type        |-> UPDATE
+                                , type        |-> client_request.type
                                 , count       |-> replication_message_duplicates
                                 ]};
                 
