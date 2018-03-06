@@ -127,13 +127,10 @@ begin
             /\ replication_request.type = ADD
             /\ replication_request.seqno < append_only_unsafe_up_to
         then
-            AwaitingRefresh:
             (* Perform a refresh *)
             await lucene.buffered_operation = NULL;
             skip;
         end if;
-
-        ReadyToApplyToLucene:
 
         if /\ local_check_point < replication_request.seqno
            /\  replication_request.type = ADD
@@ -366,76 +363,56 @@ GetReplicationRequest == /\ pc["ReplicaEngine"] = "GetReplicationRequest"
                          /\ IF /\ local_check_point < replication_request'.seqno
                                /\ replication_request'.type = ADD
                                /\ replication_request'.seqno < append_only_unsafe_up_to
-                               THEN /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "AwaitingRefresh"]
-                               ELSE /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "ReadyToApplyToLucene"]
-                         /\ UNCHANGED << isGeneratingRequests, lucene, 
-                                         next_seqno, document, request_count, 
-                                         local_check_point, 
-                                         seqnos_above_local_check_point, 
-                                         deletion_seqno, indexing_seqno, 
-                                         append_only_unsafe_up_to >>
-
-AwaitingRefresh == /\ pc["ReplicaEngine"] = "AwaitingRefresh"
-                   /\ lucene.buffered_operation = NULL
-                   /\ TRUE
-                   /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "ReadyToApplyToLucene"]
-                   /\ UNCHANGED << replication_requests, isGeneratingRequests, 
-                                   lucene, next_seqno, document, request_count, 
-                                   local_check_point, 
-                                   seqnos_above_local_check_point, 
-                                   deletion_seqno, indexing_seqno, 
-                                   append_only_unsafe_up_to, 
-                                   replication_request >>
-
-ReadyToApplyToLucene == /\ pc["ReplicaEngine"] = "ReadyToApplyToLucene"
-                        /\ IF /\ local_check_point < replication_request.seqno
-                              /\  replication_request.type = ADD
-                                  =>  \/  append_only_unsafe_up_to < replication_request.seqno
-                                      \/  /\  deletion_seqno  = NULL \/ deletion_seqno        < replication_request.seqno
-                                          /\  lucene.document = NULL \/ lucene.document.seqno < replication_request.seqno
-                              
-                              /\  replication_request.type /= ADD
-                                  =>  /\  deletion_seqno  = NULL \/ deletion_seqno        < replication_request.seqno
-                                      /\  indexing_seqno  = NULL \/ indexing_seqno        < replication_request.seqno
-                                      /\  lucene.document = NULL \/ lucene.document.seqno < replication_request.seqno
-                              THEN /\ IF replication_request.type = ADD
-                                         THEN /\ lucene' = [lucene EXCEPT !.buffered_operation = [ type    |-> ADD
-                                                                                                 , seqno   |-> replication_request.seqno
-                                                                                                 , content |-> replication_request.content
-                                                                                                 ]]
-                                              /\ UNCHANGED << deletion_seqno, 
-                                                              indexing_seqno, 
-                                                              append_only_unsafe_up_to >>
-                                         ELSE /\ IF replication_request.type = UPDATE
-                                                    THEN /\ append_only_unsafe_up_to' = replication_request.seqno
-                                                         /\ lucene' = [lucene EXCEPT !.buffered_operation = [ type    |-> UPDATE
-                                                                                                            , seqno   |-> replication_request.seqno
-                                                                                                            , content |-> replication_request.content
-                                                                                                            ]]
-                                                         /\ indexing_seqno' = replication_request.seqno
-                                                         /\ UNCHANGED deletion_seqno
-                                                    ELSE /\ Assert(replication_request.type = DELETE, 
-                                                                   "Failure of assertion at line 169, column 17.")
-                                                         /\ append_only_unsafe_up_to' = replication_request.seqno
-                                                         /\ lucene' = [lucene EXCEPT !.buffered_operation = [ type |-> DELETE ]]
-                                                         /\ deletion_seqno' = replication_request.seqno
-                                                         /\ UNCHANGED indexing_seqno
-                                   /\ IF replication_request.seqno > local_check_point + 1
-                                         THEN /\ seqnos_above_local_check_point' =                               seqnos_above_local_check_point
-                                                                                   \union {replication_request.seqno}
-                                              /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "ReplicaLoop"]
-                                         ELSE /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "AdvanceLocalCheckPoint"]
-                                              /\ UNCHANGED seqnos_above_local_check_point
-                              ELSE /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "ReplicaLoop"]
-                                   /\ UNCHANGED << lucene, 
-                                                   seqnos_above_local_check_point, 
-                                                   deletion_seqno, 
-                                                   indexing_seqno, 
-                                                   append_only_unsafe_up_to >>
-                        /\ UNCHANGED << replication_requests, 
-                                        isGeneratingRequests, next_seqno, 
-                                        document, request_count, 
-                                        local_check_point, replication_request >>
+                               THEN /\ lucene.buffered_operation = NULL
+                                    /\ TRUE
+                               ELSE /\ TRUE
+                         /\ IF /\ local_check_point < replication_request'.seqno
+                               /\  replication_request'.type = ADD
+                                   =>  \/  append_only_unsafe_up_to < replication_request'.seqno
+                                       \/  /\  deletion_seqno  = NULL \/ deletion_seqno        < replication_request'.seqno
+                                           /\  lucene.document = NULL \/ lucene.document.seqno < replication_request'.seqno
+                               
+                               /\  replication_request'.type /= ADD
+                                   =>  /\  deletion_seqno  = NULL \/ deletion_seqno        < replication_request'.seqno
+                                       /\  indexing_seqno  = NULL \/ indexing_seqno        < replication_request'.seqno
+                                       /\  lucene.document = NULL \/ lucene.document.seqno < replication_request'.seqno
+                               THEN /\ IF replication_request'.type = ADD
+                                          THEN /\ lucene' = [lucene EXCEPT !.buffered_operation = [ type    |-> ADD
+                                                                                                  , seqno   |-> replication_request'.seqno
+                                                                                                  , content |-> replication_request'.content
+                                                                                                  ]]
+                                               /\ UNCHANGED << deletion_seqno, 
+                                                               indexing_seqno, 
+                                                               append_only_unsafe_up_to >>
+                                          ELSE /\ IF replication_request'.type = UPDATE
+                                                     THEN /\ append_only_unsafe_up_to' = replication_request'.seqno
+                                                          /\ lucene' = [lucene EXCEPT !.buffered_operation = [ type    |-> UPDATE
+                                                                                                             , seqno   |-> replication_request'.seqno
+                                                                                                             , content |-> replication_request'.content
+                                                                                                             ]]
+                                                          /\ indexing_seqno' = replication_request'.seqno
+                                                          /\ UNCHANGED deletion_seqno
+                                                     ELSE /\ Assert(replication_request'.type = DELETE, 
+                                                                    "Failure of assertion at line 166, column 17.")
+                                                          /\ append_only_unsafe_up_to' = replication_request'.seqno
+                                                          /\ lucene' = [lucene EXCEPT !.buffered_operation = [ type |-> DELETE ]]
+                                                          /\ deletion_seqno' = replication_request'.seqno
+                                                          /\ UNCHANGED indexing_seqno
+                                    /\ IF replication_request'.seqno > local_check_point + 1
+                                          THEN /\ seqnos_above_local_check_point' =                               seqnos_above_local_check_point
+                                                                                    \union {replication_request'.seqno}
+                                               /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "ReplicaLoop"]
+                                          ELSE /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "AdvanceLocalCheckPoint"]
+                                               /\ UNCHANGED seqnos_above_local_check_point
+                               ELSE /\ pc' = [pc EXCEPT !["ReplicaEngine"] = "ReplicaLoop"]
+                                    /\ UNCHANGED << lucene, 
+                                                    seqnos_above_local_check_point, 
+                                                    deletion_seqno, 
+                                                    indexing_seqno, 
+                                                    append_only_unsafe_up_to >>
+                         /\ UNCHANGED << isGeneratingRequests, next_seqno, 
+                                         document, request_count, 
+                                         local_check_point >>
 
 AdvanceLocalCheckPoint == /\ pc["ReplicaEngine"] = "AdvanceLocalCheckPoint"
                           /\ local_check_point' = (CHOOSE n \in (local_check_point .. next_seqno):
@@ -459,8 +436,7 @@ AdvanceLocalCheckPoint == /\ pc["ReplicaEngine"] = "AdvanceLocalCheckPoint"
                                           replication_request >>
 
 ReplicaEngineProcess == ReplicaStart \/ ReplicaLoop
-                           \/ GetReplicationRequest \/ AwaitingRefresh
-                           \/ ReadyToApplyToLucene
+                           \/ GetReplicationRequest
                            \/ AdvanceLocalCheckPoint
 
 Next == ReplicationRequestGeneratorProcess \/ LuceneProcess
@@ -489,5 +465,5 @@ VersionMapContainsNoEntriesBeforeLocalCheckPoint == /\ \/ deletion_seqno = NULL
 
 =============================================================================
 \* Modification History
-\* Last modified Tue Mar 06 12:34:04 PST 2018 by davidturner
+\* Last modified Tue Mar 06 12:39:58 PST 2018 by davidturner
 \* Created Tue Feb 13 13:02:51 GMT 2018 by davidturner
