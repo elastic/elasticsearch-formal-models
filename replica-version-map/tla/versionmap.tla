@@ -149,7 +149,7 @@ begin
                /\  replication_request.type = ADD
                    =>  \/  /\  append_only_unsafe_up_to < replication_request.seqno
                            /\  replication_request.seqno \notin seqnos_above_local_check_point
-                           (* ^ necessary if LCP is not advanced synchronously *)
+                           (* ^ necessary if LCP is not advanced the first time an ADD is processed *)
                            
                        \/  /\  deletion_seqno  = NULL \/ deletion_seqno        < replication_request.seqno
                            /\  lucene.document = NULL \/ lucene.document.seqno < replication_request.seqno
@@ -427,5 +427,5 @@ EqualStatesAtTermination           == Terminated => lucene.document = document
 
 =============================================================================
 \* Modification History
-\* Last modified Thu Mar 08 09:37:31 GMT 2018 by davidturner
+\* Last modified Thu Mar 08 09:40:02 GMT 2018 by davidturner
 \* Created Tue Feb 13 13:02:51 GMT 2018 by davidturner
