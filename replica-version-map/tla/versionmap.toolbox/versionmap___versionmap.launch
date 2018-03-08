@@ -5,7 +5,7 @@
 <intAttribute key="dfidDepth" value="100"/>
 <booleanAttribute key="dfidMode" value="false"/>
 <intAttribute key="distributedFPSetCount" value="0"/>
-<stringAttribute key="distributedNetworkInterface" value="192.168.1.39"/>
+<stringAttribute key="distributedNetworkInterface" value="10.136.0.129"/>
 <intAttribute key="distributedNodesCount" value="1"/>
 <stringAttribute key="distributedTLC" value="off"/>
 <stringAttribute key="distributedTLCVMArgs" value=""/>
@@ -18,16 +18,14 @@
 <stringAttribute key="modelBehaviorNext" value=""/>
 <stringAttribute key="modelBehaviorSpec" value="Spec"/>
 <intAttribute key="modelBehaviorSpecType" value="1"/>
-<stringAttribute key="modelBehaviorVars" value="initial_client_requests, local_check_point, seqnos_above_local_check_point, lucene, pc, isGeneratingRequests, client_requests, replication_requests, next_seqno, append_only_unsafe_up_to, deletion_seqno, indexing_seqno, replication_request, document"/>
+<stringAttribute key="modelBehaviorVars" value="local_check_point, request_count, seqnos_above_local_check_point, lucene, pc, isGeneratingRequests, replication_requests, next_seqno, append_only_unsafe_up_to, deletion_seqno, indexing_seqno, replication_request, document"/>
 <stringAttribute key="modelComments" value=""/>
-<booleanAttribute key="modelCorrectnessCheckDeadlock" value="true"/>
+<booleanAttribute key="modelCorrectnessCheckDeadlock" value="false"/>
 <listAttribute key="modelCorrectnessInvariants">
 <listEntry value="1NoClientRequestsAtTermination"/>
 <listEntry value="1NoReplicationRequestsAtTermination"/>
 <listEntry value="1EmptyBuffersAtTermination"/>
 <listEntry value="1EqualStatesAtTermination"/>
-<listEntry value="1CannotAdvanceLocalCheckPoint"/>
-<listEntry value="1VersionMapContainsNoEntriesBeforeLocalCheckPoint"/>
 </listAttribute>
 <listAttribute key="modelCorrectnessProperties">
 <listEntry value="0Termination"/>
