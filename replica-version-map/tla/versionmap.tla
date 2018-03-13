@@ -30,7 +30,7 @@ begin
                                 ,[type |-> DELETE]
                                 } \union
 
-                                IF \E req \in replication_requests : req.type = ADD
+                                IF \E req \in replication_requests : req.type = ADD \/ next_seqno /= 1
                                 THEN {}
                                 ELSE {[type |-> ADD, content |-> "NEW"]}
 
@@ -38,7 +38,6 @@ begin
 
             if client_request.type = UPDATE \/ client_request.type = ADD
             then
-                await client_request.type = UPDATE \/ next_seqno = 1;
                 document := [ seqno   |-> next_seqno
                             , content |-> client_request.content
                             ];
@@ -240,12 +239,11 @@ GeneratorLoop == /\ pc["ReplicationRequestGenerator"] = "GeneratorLoop"
                                                      ,[type |-> DELETE]
                                                      } \union
                                                      
-                                                     IF \E req \in replication_requests : req.type = ADD
+                                                     IF \E req \in replication_requests : req.type = ADD \/ next_seqno /= 1
                                                      THEN {}
                                                      ELSE {[type |-> ADD, content |-> "NEW"]}:
                                  /\ IF client_request.type = UPDATE \/ client_request.type = ADD
-                                       THEN /\ client_request.type = UPDATE \/ next_seqno = 1
-                                            /\ document' = [ seqno   |-> next_seqno
+                                       THEN /\ document' = [ seqno   |-> next_seqno
                                                            , content |-> client_request.content
                                                            ]
                                             /\ replication_requests' =                     replication_requests
@@ -254,7 +252,7 @@ GeneratorLoop == /\ pc["ReplicationRequestGenerator"] = "GeneratorLoop"
                                                                                , type        |-> client_request.type
                                                                                ]}
                                        ELSE /\ Assert(client_request.type = DELETE, 
-                                                      "Failure of assertion at line 52, column 17.")
+                                                      "Failure of assertion at line 51, column 17.")
                                             /\ document' = NULL
                                             /\ replication_requests' =                     replication_requests
                                                                        \union {[ seqno       |-> next_seqno
@@ -278,7 +276,7 @@ LuceneLoop == /\ pc["ReplicaLucene"] = "LuceneLoop"
               /\ IF lucene.state /= CLOSED \/ lucene.buffered_operation /= NULL
                     THEN /\ lucene.buffered_operation /= NULL
                          /\ Assert(lucene.buffered_operation.type = ADD => lucene.document = NULL, 
-                                   "Failure of assertion at line 72, column 9.")
+                                   "Failure of assertion at line 71, column 9.")
                          /\ lucene' =       [lucene EXCEPT
                                       !.document =
                                           CASE lucene.buffered_operation.type = UPDATE
@@ -386,7 +384,7 @@ ReplicaLoop == /\ pc["ReplicaEngine"] = "ReplicaLoop"
                                                                 /\ indexing_seqno' = replication_request.seqno
                                                                 /\ UNCHANGED deletion_seqno
                                                            ELSE /\ Assert(replication_request.type = DELETE, 
-                                                                          "Failure of assertion at line 182, column 21.")
+                                                                          "Failure of assertion at line 181, column 21.")
                                                                 /\ append_only_unsafe_up_to' = replication_request.seqno
                                                                 /\ lucene' = [lucene EXCEPT !.buffered_operation = [ type |-> DELETE ]]
                                                                 /\ deletion_seqno' = replication_request.seqno
@@ -427,5 +425,5 @@ EqualStatesAtTermination           == Terminated => lucene.document = document
 
 =============================================================================
 \* Modification History
-\* Last modified Thu Mar 08 09:40:02 GMT 2018 by davidturner
+\* Last modified Tue Mar 13 11:56:23 GMT 2018 by davidturner
 \* Created Tue Feb 13 13:02:51 GMT 2018 by davidturner
