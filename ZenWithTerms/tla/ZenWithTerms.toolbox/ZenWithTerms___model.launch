@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<launchConfiguration type="org.lamport.tla.toolbox.tool.tlc.modelCheck">
+    <stringAttribute key="TLCCmdLineParameters" value=""/>
+    <stringAttribute key="configurationName" value="model"/>
+    <booleanAttribute key="deferLiveness" value="false"/>
+    <intAttribute key="dfidDepth" value="100"/>
+    <booleanAttribute key="dfidMode" value="false"/>
+    <intAttribute key="distributedFPSetCount" value="0"/>
+    <stringAttribute key="distributedNetworkInterface" value="192.168.178.34"/>
+    <intAttribute key="distributedNodesCount" value="1"/>
+    <stringAttribute key="distributedTLC" value="off"/>
+    <stringAttribute key="distributedTLCVMArgs" value=""/>
+    <intAttribute key="fpBits" value="1"/>
+    <intAttribute key="fpIndex" value="1"/>
+    <intAttribute key="maxHeapSize" value="25"/>
+    <intAttribute key="maxSetSize" value="1000000"/>
+    <booleanAttribute key="mcMode" value="true"/>
+    <stringAttribute key="modelBehaviorInit" value="Init"/>
+    <stringAttribute key="modelBehaviorNext" value="Next"/>
+    <stringAttribute key="modelBehaviorSpec" value=""/>
+    <intAttribute key="modelBehaviorSpecType" value="2"/>
+    <stringAttribute key="modelBehaviorVars" value="lastAcceptedTerm, messages, lastPublishedConfiguration, electionWon, lastAcceptedInstance, publishVotes, allowElection, currentTerm, currentConfiguration, descendant, publishInstance, joinVotes, lastAcceptedConfiguration, lastAcceptedValue"/>
+    <stringAttribute key="modelComments" value=""/>
+    <booleanAttribute key="modelCorrectnessCheckDeadlock" value="true"/>
+    <listAttribute key="modelCorrectnessInvariants">
+        <listEntry value="1OneMasterPerTerm"/>
+        <listEntry value="1LogMatching"/>
+        <listEntry value="1SingleNodeInvariant"/>
+        <listEntry value="1CommittedValuesDescendantsFromCommittedValues"/>
+        <listEntry value="1CommittedValuesDescendantsFromInitialValue"/>
+        <listEntry value="1DescendantRelationIsStrictlyOrdered"/>
+        <listEntry value="1NewerOpsBasedOnOlderCommittedOps"/>
+    </listAttribute>
+    <listAttribute key="modelCorrectnessProperties"/>
+    <stringAttribute key="modelExpressionEval" value=""/>
+    <stringAttribute key="modelParameterActionConstraint" value=""/>
+    <listAttribute key="modelParameterConstants">
+        <listEntry value="Join;;Join;1;0"/>
+        <listEntry value="Nodes;;{n1, n2, n3};1;1"/>
+        <listEntry value="Commit;;Commit;1;0"/>
+        <listEntry value="PublishResponse;;PublishResponse;1;0"/>
+        <listEntry value="Values;;{v1, v2};1;1"/>
+        <listEntry value="PublishRequest;;PublishRequest;1;0"/>
+    </listAttribute>
+    <stringAttribute key="modelParameterContraint" value="StateConstraint"/>
+    <listAttribute key="modelParameterDefinitions">
+        <listEntry value="Nat;;{0, 1, 2};0;0"/>
+    </listAttribute>
+    <stringAttribute key="modelParameterModelValues" value="{}"/>
+    <stringAttribute key="modelParameterNewDefinitions" value=""/>
+    <intAttribute key="numberOfWorkers" value="2"/>
+    <booleanAttribute key="recover" value="false"/>
+    <stringAttribute key="result.mail.address" value=""/>
+    <intAttribute key="simuAril" value="-1"/>
+    <intAttribute key="simuDepth" value="100"/>
+    <intAttribute key="simuSeed" value="-1"/>
+    <stringAttribute key="specName" value="ZenWithTerms"/>
+    <stringAttribute key="view" value=""/>
+    <booleanAttribute key="visualizeStateGraph" value="false"/>
+</launchConfiguration>
