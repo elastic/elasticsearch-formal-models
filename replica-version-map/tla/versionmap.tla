@@ -4,6 +4,8 @@ EXTENDS Naturals, FiniteSets, Sequences, TLC
 CONSTANTS ADD, UPDATE, DELETE, NULL
 CONSTANTS OPEN, CLOSED
 
+(* TODO give context in docs *)
+(* TODO move into data folder *)
 
 (* --algorithm basic
 
@@ -67,7 +69,7 @@ process LuceneProcess = "ReplicaLucene"
 begin
     LuceneLoop:
     while lucene.state /= CLOSED \/ lucene.buffered_operation /= NULL do
-        await lucene.buffered_operation /= NULL;
+        await lucene.buffered_operation /= NULL; (* TODO model buffer as a sequence *)
         assert lucene.buffered_operation.type = ADD => lucene.document = NULL;
         lucene := [lucene EXCEPT
             !.document =
@@ -255,7 +257,7 @@ GeneratorLoop == /\ pc["ReplicationRequestGenerator"] = "GeneratorLoop"
                                                                                , type        |-> client_request.type
                                                                                ]}
                                        ELSE /\ Assert(client_request.type = DELETE, 
-                                                      "Failure of assertion at line 51, column 17.")
+                                                      "Failure of assertion at line 53, column 17.")
                                             /\ document' = NULL
                                             /\ replication_requests' =                     replication_requests
                                                                        \union {[ seqno       |-> next_seqno
@@ -279,7 +281,7 @@ LuceneLoop == /\ pc["ReplicaLucene"] = "LuceneLoop"
               /\ IF lucene.state /= CLOSED \/ lucene.buffered_operation /= NULL
                     THEN /\ lucene.buffered_operation /= NULL
                          /\ Assert(lucene.buffered_operation.type = ADD => lucene.document = NULL, 
-                                   "Failure of assertion at line 71, column 9.")
+                                   "Failure of assertion at line 73, column 9.")
                          /\ lucene' =       [lucene EXCEPT
                                       !.document =
                                           CASE lucene.buffered_operation.type = UPDATE
@@ -385,7 +387,7 @@ ReplicaLoop == /\ pc["ReplicaEngine"] = "ReplicaLoop"
                                                                 /\ indexing_seqno' = replication_request.seqno
                                                                 /\ UNCHANGED deletion_seqno
                                                            ELSE /\ Assert(replication_request.type = DELETE, 
-                                                                          "Failure of assertion at line 181, column 21.")
+                                                                          "Failure of assertion at line 186, column 21.")
                                                                 /\ append_only_unsafe_up_to' = replication_request.seqno
                                                                 /\ lucene' = [lucene EXCEPT !.buffered_operation = [ type |-> DELETE ]]
                                                                 /\ deletion_seqno' = replication_request.seqno
@@ -426,5 +428,5 @@ EqualStatesAtTermination           == Terminated => lucene.document = document
 
 =============================================================================
 \* Modification History
-\* Last modified Tue Mar 13 11:56:23 GMT 2018 by davidturner
+\* Last modified Tue Mar 20 14:17:41 GMT 2018 by davidturner
 \* Created Tue Feb 13 13:02:51 GMT 2018 by davidturner
