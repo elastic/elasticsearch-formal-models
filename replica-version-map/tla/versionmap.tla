@@ -133,7 +133,9 @@ begin
                 (* consume request *)
                 replication_requests := replication_requests \ {replication_request};
             or
-                skip;
+                await replication_request.type /= ADD;
+                (* ^ not possible to see a duplicate of an ADD request
+                   - any other ones will be marked as retries *)
             end either; 
     
             if  /\ local_check_point < replication_request.seqno
@@ -149,10 +151,8 @@ begin
     
             if /\  local_check_point < replication_request.seqno
                /\  replication_request.type = ADD
-                   =>  \/  /\  append_only_unsafe_up_to < replication_request.seqno
-                           /\  replication_request.seqno \notin seqnos_above_local_check_point
-                           (* ^ necessary if LCP is not advanced the first time an ADD is processed *)
-                           
+                   =>  \/      append_only_unsafe_up_to < replication_request.seqno
+
                        \/  /\  deletion_seqno  = NULL \/ deletion_seqno        < replication_request.seqno
                            /\  lucene.document = NULL \/ lucene.document.seqno < replication_request.seqno
     
@@ -350,7 +350,7 @@ ReplicaLoop == /\ pc["ReplicaEngine"] = "ReplicaLoop"
                /\ IF replication_requests /= {}
                      THEN /\ \E replication_request \in replication_requests:
                                /\ \/ /\ replication_requests' = replication_requests \ {replication_request}
-                                  \/ /\ TRUE
+                                  \/ /\ replication_request.type /= ADD
                                      /\ UNCHANGED replication_requests
                                /\ IF /\ local_check_point < replication_request.seqno
                                      /\ replication_request.type = ADD
@@ -359,9 +359,7 @@ ReplicaLoop == /\ pc["ReplicaEngine"] = "ReplicaLoop"
                                      ELSE /\ TRUE
                                /\ IF /\  local_check_point < replication_request.seqno
                                      /\  replication_request.type = ADD
-                                         =>  \/  /\  append_only_unsafe_up_to < replication_request.seqno
-                                                 /\  replication_request.seqno \notin seqnos_above_local_check_point
-                                     
+                                         =>  \/      append_only_unsafe_up_to < replication_request.seqno
                                      
                                              \/  /\  deletion_seqno  = NULL \/ deletion_seqno        < replication_request.seqno
                                                  /\  lucene.document = NULL \/ lucene.document.seqno < replication_request.seqno
