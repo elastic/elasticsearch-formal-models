@@ -140,7 +140,10 @@ begin
                 /\ replication_request.type = ADD
                 /\ replication_request.seqno < append_only_unsafe_up_to
             then
-                (* Perform a refresh *)
+                (* Perform a refresh. This is an ADD operation which may be unsafe so we need
+                   to look at the existing documents; the version map is not kept up-to-date
+                   so we have to do a refresh so that we can use Lucene to tell us about the
+                   document. *)
                 await lucene.buffered_operation = NULL;
             end if;
     
