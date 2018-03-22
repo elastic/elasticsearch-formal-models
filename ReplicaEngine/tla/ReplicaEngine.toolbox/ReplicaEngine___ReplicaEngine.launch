@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<launchConfiguration type="org.lamport.tla.toolbox.tool.tlc.modelCheck">
+<stringAttribute key="TLCCmdLineParameters" value=""/>
+<stringAttribute key="configurationName" value="ReplicaEngine"/>
+<intAttribute key="dfidDepth" value="100"/>
+<booleanAttribute key="dfidMode" value="false"/>
+<intAttribute key="distributedFPSetCount" value="0"/>
+<stringAttribute key="distributedNetworkInterface" value="192.168.1.39"/>
+<intAttribute key="distributedNodesCount" value="1"/>
+<stringAttribute key="distributedTLC" value="off"/>
+<stringAttribute key="distributedTLCVMArgs" value=""/>
+<intAttribute key="fpBits" value="1"/>
+<intAttribute key="fpIndex" value="1"/>
+<intAttribute key="maxHeapSize" value="25"/>
+<intAttribute key="maxSetSize" value="1000000"/>
+<booleanAttribute key="mcMode" value="true"/>
+<stringAttribute key="modelBehaviorInit" value=""/>
+<stringAttribute key="modelBehaviorNext" value=""/>
+<stringAttribute key="modelBehaviorSpec" value="Spec"/>
+<intAttribute key="modelBehaviorSpecType" value="1"/>
+<stringAttribute key="modelBehaviorVars" value="versionMap_isUnsafe, request_count, expected_doc, lucene, useLuceneUpdateDocument, pc, replication_requests, maxUnsafeAutoIdTimestamp, versionMap_docSeqNo, req, indexIntoLucene, versionMap_needsSafeAccess, currentNotFoundOrDeleted, plan, localCheckPoint, completedSeqnos"/>
+<stringAttribute key="modelComments" value=""/>
+<booleanAttribute key="modelCorrectnessCheckDeadlock" value="true"/>
+<listAttribute key="modelCorrectnessInvariants">
+<listEntry value="1Invariant"/>
+</listAttribute>
+<listAttribute key="modelCorrectnessProperties">
+<listEntry value="0Termination"/>
+<listEntry value="1Invariant"/>
+</listAttribute>
+<stringAttribute key="modelExpressionEval" value=""/>
+<stringAttribute key="modelParameterActionConstraint" value=""/>
+<listAttribute key="modelParameterConstants">
+<listEntry value="UPDATE;;UPDATE;1;0"/>
+<listEntry value="NULL;;NULL;1;0"/>
+<listEntry value="ADD;;ADD;1;0"/>
+<listEntry value="DELETE;;DELETE;1;0"/>
+<listEntry value="DocContent;;{DocA, DocB};1;1"/>
+<listEntry value="RETRY_ADD;;RETRY_ADD;1;0"/>
+<listEntry value="Lucene_deleteDocuments;;Lucene_deleteDocuments;1;0"/>
+<listEntry value="Lucene_addDocuments;;Lucene_addDocuments;1;0"/>
+<listEntry value="Lucene_updateDocuments;;Lucene_updateDocuments;1;0"/>
+<listEntry value="DocAutoIdTimestamp;;1000;0;0"/>
+<listEntry value="defaultInitValue;;defaultInitValue;1;0"/>
+</listAttribute>
+<stringAttribute key="modelParameterContraint" value=""/>
+<listAttribute key="modelParameterDefinitions"/>
+<stringAttribute key="modelParameterModelValues" value="{}"/>
+<stringAttribute key="modelParameterNewDefinitions" value=""/>
+<stringAttribute key="modelPropertiesExpand" value=""/>
+<intAttribute key="numberOfWorkers" value="4"/>
+<booleanAttribute key="recover" value="false"/>
+<stringAttribute key="result.mail.address" value=""/>
+<intAttribute key="simuAril" value="-1"/>
+<intAttribute key="simuDepth" value="100"/>
+<intAttribute key="simuSeed" value="-1"/>
+<stringAttribute key="specName" value="ReplicaEngine"/>
+<stringAttribute key="view" value=""/>
+</launchConfiguration>
