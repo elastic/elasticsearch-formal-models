@@ -203,6 +203,9 @@ begin
     
     if req.type = DELETE
     then
+
+        versionMap_needsSafeAccess := TRUE;    
+    
         (* planDeletionAsNonPrimary *)
         
         if req.seqno <= localCheckPoint
@@ -825,5 +828,5 @@ Invariant == Terminated => /\ expected_doc  = NULL => lucene.document = NULL
 
 =============================================================================
 \* Modification History
-\* Last modified Fri Mar 23 11:45:05 GMT 2018 by davidturner
+\* Last modified Fri Mar 23 13:26:50 GMT 2018 by davidturner
 \* Created Wed Mar 21 12:14:28 GMT 2018 by davidturner
