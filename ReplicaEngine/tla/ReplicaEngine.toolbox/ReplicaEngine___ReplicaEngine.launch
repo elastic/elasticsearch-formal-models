@@ -18,7 +18,7 @@
 <stringAttribute key="modelBehaviorNext" value=""/>
 <stringAttribute key="modelBehaviorSpec" value="Spec"/>
 <intAttribute key="modelBehaviorSpecType" value="1"/>
-<stringAttribute key="modelBehaviorVars" value="versionMap_isUnsafe, request_count, expected_doc, lucene, useLuceneUpdateDocument, pc, replication_requests, maxUnsafeAutoIdTimestamp, versionMap_docSeqNo, req, indexIntoLucene, versionMap_needsSafeAccess, currentNotFoundOrDeleted, plan, localCheckPoint, completedSeqnos"/>
+<stringAttribute key="modelBehaviorVars" value="versionMap_isUnsafe, request_count, expected_doc, lucene, useLuceneUpdateDocument, pc, versionMap_entry, replication_requests, maxUnsafeAutoIdTimestamp, currentlyDeleted, req, indexIntoLucene, versionMap_needsSafeAccess, deleteFromLucene, currentNotFoundOrDeleted, plan, localCheckPoint, completedSeqnos"/>
 <stringAttribute key="modelComments" value=""/>
 <booleanAttribute key="modelCorrectnessCheckDeadlock" value="true"/>
 <listAttribute key="modelCorrectnessInvariants">
@@ -28,7 +28,7 @@
 <listEntry value="0Termination"/>
 <listEntry value="1Invariant"/>
 </listAttribute>
-<stringAttribute key="modelExpressionEval" value=""/>
+<stringAttribute key="modelExpressionEval" value="Cardinality(Requests(4))"/>
 <stringAttribute key="modelParameterActionConstraint" value=""/>
 <listAttribute key="modelParameterConstants">
 <listEntry value="UPDATE;;UPDATE;1;0"/>

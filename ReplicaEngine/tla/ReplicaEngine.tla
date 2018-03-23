@@ -143,6 +143,9 @@ begin
             !.document = ApplyBufferedOperations(lucene.buffer, @),
             !.buffer   = <<>>
             ];
+            
+        LuceneUpdateVersionMap: (* TODO needs an invariant saying that the VM is >= Lucene and also contains the buffered ops *)
+                        
         versionMap_isUnsafe := FALSE;
         versionMap_needsSafeAccess := FALSE;
         
@@ -508,29 +511,40 @@ LuceneLoop == /\ pc["ReplicaLucene"] = "LuceneLoop"
                                       !.document = ApplyBufferedOperations(lucene.buffer, @),
                                       !.buffer   = <<>>
                                       ]
-                         /\ versionMap_isUnsafe' = FALSE
-                         /\ versionMap_needsSafeAccess' = FALSE
-                         /\ IF versionMap_entry /= NULL
-                               THEN /\ IF versionMap_entry.type = UPDATE
-                                          THEN /\ versionMap_entry' = NULL
-                                          ELSE /\ Assert(versionMap_entry.type = DELETE, 
-                                                         "Failure of assertion at line 155, column 17.")
-                                               /\ versionMap_entry' = [ versionMap_entry EXCEPT !.flushed = TRUE ]
-                               ELSE /\ TRUE
-                                    /\ UNCHANGED versionMap_entry
-                         /\ pc' = [pc EXCEPT !["ReplicaLucene"] = "LuceneLoop"]
+                         /\ pc' = [pc EXCEPT !["ReplicaLucene"] = "LuceneUpdateVersionMap"]
                     ELSE /\ pc' = [pc EXCEPT !["ReplicaLucene"] = "Done"]
-                         /\ UNCHANGED << versionMap_needsSafeAccess, 
-                                         versionMap_isUnsafe, versionMap_entry, 
-                                         lucene >>
+                         /\ UNCHANGED lucene
               /\ UNCHANGED << request_count, replication_requests, 
-                              expected_doc, localCheckPoint, completedSeqnos, 
+                              expected_doc, versionMap_needsSafeAccess, 
+                              versionMap_isUnsafe, versionMap_entry, 
+                              localCheckPoint, completedSeqnos, 
                               maxUnsafeAutoIdTimestamp, req, plan, 
                               deleteFromLucene, currentlyDeleted, 
                               currentNotFoundOrDeleted, 
                               useLuceneUpdateDocument, indexIntoLucene >>
 
-LuceneProcess == LuceneLoop
+LuceneUpdateVersionMap == /\ pc["ReplicaLucene"] = "LuceneUpdateVersionMap"
+                          /\ versionMap_isUnsafe' = FALSE
+                          /\ versionMap_needsSafeAccess' = FALSE
+                          /\ IF versionMap_entry /= NULL
+                                THEN /\ IF versionMap_entry.type = UPDATE
+                                           THEN /\ versionMap_entry' = NULL
+                                           ELSE /\ Assert(versionMap_entry.type = DELETE, 
+                                                          "Failure of assertion at line 158, column 17.")
+                                                /\ versionMap_entry' = [ versionMap_entry EXCEPT !.flushed = TRUE ]
+                                ELSE /\ TRUE
+                                     /\ UNCHANGED versionMap_entry
+                          /\ pc' = [pc EXCEPT !["ReplicaLucene"] = "LuceneLoop"]
+                          /\ UNCHANGED << request_count, replication_requests, 
+                                          expected_doc, lucene, 
+                                          localCheckPoint, completedSeqnos, 
+                                          maxUnsafeAutoIdTimestamp, req, plan, 
+                                          deleteFromLucene, currentlyDeleted, 
+                                          currentNotFoundOrDeleted, 
+                                          useLuceneUpdateDocument, 
+                                          indexIntoLucene >>
+
+LuceneProcess == LuceneLoop \/ LuceneUpdateVersionMap
 
 DeleteCollectorLoop == /\ pc["DeleteCollector"] = "DeleteCollectorLoop"
                        /\ IF pc["Consumer"] /= "Done"
@@ -808,10 +822,9 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 Terminated == \A self \in ProcSet: pc[self] = "Done"
 
-Invariant == /\ Cardinality(replication_requests) <= 4
-             /\ Terminated => lucene.document.content = expected_doc
+Invariant == Terminated => lucene.document.content = expected_doc
 
 =============================================================================
 \* Modification History
-\* Last modified Fri Mar 23 08:34:30 GMT 2018 by davidturner
+\* Last modified Fri Mar 23 11:45:05 GMT 2018 by davidturner
 \* Created Wed Mar 21 12:14:28 GMT 2018 by davidturner
