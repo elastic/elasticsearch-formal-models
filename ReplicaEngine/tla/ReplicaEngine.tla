@@ -129,18 +129,14 @@ end process;
 (* Lucene refreshes can happen at any time *)
 process LuceneProcess = "ReplicaLucene"
 variables
-    lucene =
-        [ document |-> NULL
-        , buffer   |-> <<>>
-        ],
+    lucene_document = NULL,
+    lucene_buffer   = <<>>,
 begin
     LuceneLoop:
-    while pc["Consumer"] /= "Done" \/ lucene.buffer /= <<>> do
+    while pc["Consumer"] /= "Done" \/ lucene_buffer /= <<>> do
 
-        lucene := [lucene EXCEPT
-            !.document = ApplyBufferedOperations(lucene.buffer, @),
-            !.buffer   = <<>>
-            ];
+        lucene_document := ApplyBufferedOperations(lucene_buffer, lucene_document);
+        lucene_buffer := <<>>;
             
         LuceneUpdateVersionMap: (* TODO needs an invariant saying that the VM is >= Lucene and also contains the buffered ops *)
                         
@@ -219,7 +215,7 @@ begin
             then
                 (* Perform a Lucene refresh *)
                 AwaitRefreshOnDelete: \* Label here to allow for other concurrent activity
-                await lucene.buffer = <<>>;
+                await lucene_buffer = <<>>;
                 versionMap_needsSafeAccess := TRUE;
             end if;
         
@@ -242,14 +238,14 @@ begin
                 end if;
             else
                 (* Doc is not in version map - check Lucene *)
-                if lucene.document = NULL
+                if lucene_document = NULL
                 then
                     (* LUCENE_DOC_NOT_FOUND *)
                     plan := "processNormallyExceptNotFound";
                     deleteFromLucene := TRUE;
                     currentlyDeleted := TRUE;
                 else
-                    if req.seqno > lucene.document.seqno
+                    if req.seqno > lucene_document.seqno
                     then
                         (* OP_NEWER *)
                         plan := "processNormally";                 
@@ -270,7 +266,7 @@ begin
         then
             if currentlyDeleted = FALSE
             then
-                lucene := [lucene EXCEPT !.buffer = Append(@, [ type |-> Lucene_deleteDocuments ])];
+                lucene_buffer := Append(lucene_buffer, [ type |-> Lucene_deleteDocuments ]);
             end if;
 
             versionMap_entry := [ type |-> DELETE, seqno |-> req.seqno, flushed |-> FALSE ];
@@ -318,7 +314,7 @@ begin
                 then
                     (* Perform a Lucene refresh *)
                     AwaitRefreshOnIndex: \* Label here to allow for other concurrent activity
-                    await lucene.buffer = <<>>;
+                    await lucene_buffer = <<>>;
                     versionMap_needsSafeAccess := TRUE;                
                 end if;
             
@@ -343,7 +339,7 @@ begin
                     end if;
                 else
                     (* Doc is not in version map - check Lucene *)
-                    if lucene.document = NULL
+                    if lucene_document = NULL
                     then
                         (* LUCENE_DOC_NOT_FOUND *)
                         plan := "processNormallyExceptNotFound";
@@ -351,7 +347,7 @@ begin
                         useLuceneUpdateDocument  := FALSE;
                         indexIntoLucene          := TRUE;
                     else
-                        if req.seqno > lucene.document.seqno
+                        if req.seqno > lucene_document.seqno
                         then
                             (* OP_NEWER *)
                             plan := "processNormally";                 
@@ -375,11 +371,11 @@ begin
         
         if indexIntoLucene
         then
-            lucene := [lucene EXCEPT !.buffer = Append(@, 
+            lucene_buffer := Append(lucene_buffer, 
                 [ type    |-> IF useLuceneUpdateDocument THEN Lucene_updateDocuments ELSE Lucene_addDocuments
                 , seqno   |-> req.seqno
                 , content |-> req.content
-                ])];
+                ]);
 
             if versionMap_needsSafeAccess
             then
@@ -825,7 +821,7 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 Terminated == \A self \in ProcSet: pc[self] = "Done"
 
-Invariant == Terminated => /\ expected_doc  = NULL => lucene.document = NULL
-                           /\ expected_doc /= NULL => lucene.document.content = expected_doc
+Invariant == Terminated => /\ expected_doc  = NULL => lucene_document = NULL
+                           /\ expected_doc /= NULL => lucene_document.content = expected_doc
 
 =============================================================================
