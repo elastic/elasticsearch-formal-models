@@ -829,6 +829,3 @@ Invariant == Terminated => /\ expected_doc  = NULL => lucene.document = NULL
                            /\ expected_doc /= NULL => lucene.document.content = expected_doc
 
 =============================================================================
-\* Modification History
-\* Last modified Fri Mar 23 13:26:50 GMT 2018 by davidturner
-\* Created Wed Mar 21 12:14:28 GMT 2018 by davidturner
