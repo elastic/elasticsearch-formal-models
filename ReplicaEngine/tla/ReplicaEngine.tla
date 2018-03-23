@@ -153,6 +153,7 @@ begin
     while pc["Consumer"] /= "Done" do
         await /\ versionMap_entry /= NULL
               /\ versionMap_entry.type = DELETE
+              /\ versionMap_entry.seqno <= localCheckPoint \* PR #28790
               /\ versionMap_entry.flushed = TRUE;
         versionMap_entry := NULL;
     end while;
