@@ -21,7 +21,8 @@ CONSTANTS DocAutoIdTimestamp
 Request(request_count)
     (* ADD: An optimised append-only write can only occur as the first operation
     on the document ID in seqno order. Any subsequent attempts to ADD the
-    document have the retry flag set and modelled as a RETRY_ADD. *)
+    document have the retry flag set and modelled as a RETRY_ADD. Other operations
+    on the document are also possible. *)
     ==    { [type |-> ADD, seqno |-> 1, content |-> content, autoIdTimeStamp |-> DocAutoIdTimestamp]
           : content \in DocContent
           }
@@ -31,10 +32,7 @@ Request(request_count)
           : seqno   \in 1..request_count
           , content \in DocContent
           }
-    (* UPDATE: A write that does not involve an internally-generated document ID.
-       RETRY_ADD: A retry of a write that does involve an internally-generated
-       document ID.
-       Both can occur at any seqno. *)
+    (* UPDATE: A write that does not involve an internally-generated document ID. *)
     \cup  { [type |-> UPDATE, seqno |-> seqno, content |-> content]
           : seqno   \in 1..request_count
           , content \in DocContent
