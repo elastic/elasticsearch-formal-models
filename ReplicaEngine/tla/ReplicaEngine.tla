@@ -136,7 +136,7 @@ variables
 begin
     LuceneLoop:
     while pc["Consumer"] /= "Done" \/ lucene.buffer /= <<>> do
-        await lucene.buffer /= <<>>;
+
         lucene := [lucene EXCEPT
             !.document = ApplyBufferedOperations(lucene.buffer, @),
             !.buffer   = <<>>
