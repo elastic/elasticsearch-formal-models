@@ -23,24 +23,14 @@ Request(request_count)
     on the document ID in seqno order. Any subsequent attempts to ADD the
     document have the retry flag set and modelled as a RETRY_ADD. Other operations
     on the document are also possible. *)
-    ==    { [type |-> ADD, seqno |-> 1, content |-> content, autoIdTimeStamp |-> DocAutoIdTimestamp]
-          : content \in DocContent
-          }
+    ==    [type : {ADD}, seqno : {1}, content : DocContent, autoIdTimeStamp : {DocAutoIdTimestamp}]
     (* RETRY_ADD: A retry of a write that does involve an internally-generated
        document ID. *)
-    \cup  { [type |-> RETRY_ADD, seqno |-> seqno, content |-> content, autoIdTimeStamp |-> DocAutoIdTimestamp]
-          : seqno   \in 1..request_count
-          , content \in DocContent
-          }
+    \cup  [type : {RETRY_ADD}, seqno : 1..request_count, content : DocContent, autoIdTimeStamp : {DocAutoIdTimestamp}]
     (* UPDATE: A write that does not involve an internally-generated document ID. *)
-    \cup  { [type |-> UPDATE, seqno |-> seqno, content |-> content]
-          : seqno   \in 1..request_count
-          , content \in DocContent
-          }
+    \cup  [type : {UPDATE}, seqno : 1..request_count, content : DocContent]
     (* DELETE *)
-    \cup  { [type |-> DELETE, seqno |-> seqno]
-          : seqno \in 1..request_count
-          }
+    \cup  [type : {DELETE}, seqno : 1..request_count]
 
 (* The set of sets of requests, which have distinct seqnos *)
 RequestSet(request_count)
