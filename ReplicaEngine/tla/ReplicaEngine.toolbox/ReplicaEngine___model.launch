@@ -28,7 +28,7 @@
 <listEntry value="0Termination"/>
 <listEntry value="1Invariant"/>
 </listAttribute>
-<stringAttribute key="modelExpressionEval" value="Cardinality(Requests(4))"/>
+<stringAttribute key="modelExpressionEval" value=""/>
 <stringAttribute key="modelParameterActionConstraint" value=""/>
 <listAttribute key="modelParameterConstants">
 <listEntry value="UPDATE;;UPDATE;1;0"/>
