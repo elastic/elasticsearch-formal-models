@@ -39,7 +39,7 @@ Request(request_count)
           }
     (* DELETE *)
     \cup  { [type |-> DELETE, seqno |-> seqno]
-          : seqno \in 2..request_count
+          : seqno \in 1..request_count
           }
 
 (* The set of sets of requests, which have distinct seqnos *)
