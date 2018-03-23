@@ -176,6 +176,7 @@ end process
 process ConsumerProcess = "Consumer"
 variables
     maxUnsafeAutoIdTimestamp \in {0, DocAutoIdTimestamp - 1, DocAutoIdTimestamp, DocAutoIdTimestamp + 1},
+    maxSeqNoOfNonAppendOnlyOperations \in {0, 2, request_count + 1},
     req, plan,
     deleteFromLucene, currentlyDeleted,
     currentNotFoundOrDeleted, useLuceneUpdateDocument, indexIntoLucene,
@@ -194,6 +195,8 @@ begin
     
         (* planDeletionAsNonPrimary *)
         
+        maxSeqNoOfNonAppendOnlyOperations := Max(maxSeqNoOfNonAppendOnlyOperations, req.seqno);
+
         if req.seqno <= localCheckPoint
         then
             (* OP_STALE_OR_EQUAL *)
@@ -282,12 +285,17 @@ begin
         
         if /\ req.type = ADD
            /\ maxUnsafeAutoIdTimestamp < req.autoIdTimeStamp
+           /\ maxSeqNoOfNonAppendOnlyOperations < req.seqno \* PR #28787
         then
             plan                     := "optimisedAppendOnly";
             currentNotFoundOrDeleted := TRUE;
             useLuceneUpdateDocument  := FALSE;
             indexIntoLucene          := TRUE;
         else
+            if FALSE = (req.type \in {ADD, RETRY_ADD})
+            then
+                maxSeqNoOfNonAppendOnlyOperations := Max(maxSeqNoOfNonAppendOnlyOperations, req.seqno);
+            end if;
         
             (* All other operations are planned normally *)
             versionMap_needsSafeAccess := TRUE;
