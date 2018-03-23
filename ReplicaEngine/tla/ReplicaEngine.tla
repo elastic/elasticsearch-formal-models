@@ -220,6 +220,7 @@ begin
                 (* Perform a Lucene refresh *)
                 AwaitRefreshOnDelete: \* Label here to allow for other concurrent activity
                 await lucene.buffer = <<>>;
+                versionMap_needsSafeAccess := TRUE;
             end if;
         
             compareDeleteOpToLuceneDocBasedOnSeqNo: \* Label needed because of AwaitRefreshOnDelete label
@@ -318,6 +319,7 @@ begin
                     (* Perform a Lucene refresh *)
                     AwaitRefreshOnIndex: \* Label here to allow for other concurrent activity
                     await lucene.buffer = <<>>;
+                    versionMap_needsSafeAccess := TRUE;                
                 end if;
             
                 compareIndexOpToLuceneDocBasedOnSeqNo: \* Label needed because of AwaitRefreshOnIndex label
