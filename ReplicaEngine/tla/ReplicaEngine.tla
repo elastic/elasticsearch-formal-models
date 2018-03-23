@@ -77,13 +77,13 @@ RECURSIVE ApplyBufferedOperations(_, _)
 ApplyBufferedOperations(buffer, origDoc)
     == IF buffer = <<>>
        THEN origDoc
-       ELSE LET prevDoc == ApplyBufferedOperations(Tail(buffer), origDoc)
-         IN LET nextOp  == Head(buffer)
-         IN CASE       nextOp.type = Lucene_deleteDocuments -> NULL
+       ELSE LET nextOp  == Head(buffer)
+         IN ApplyBufferedOperations(Tail(buffer),
+            CASE       nextOp.type = Lucene_deleteDocuments -> NULL
               [] \/    nextOp.type = Lucene_updateDocuments
                  \/ /\ nextOp.type = Lucene_addDocuments
-                    /\ prevDoc = NULL                       -> [content |-> nextOp.content, seqno |-> nextOp.seqno]
-              [] OTHER -> Assert(FALSE, "Error: Lucene_addDocuments when prevDoc /= NULL")
+                    /\ origDoc = NULL                       -> [content |-> nextOp.content, seqno |-> nextOp.seqno]
+              [] OTHER -> Assert(FALSE, "Error: Lucene_addDocuments when origDoc /= NULL"))
 
 Max(a,b) == IF a <= b THEN b ELSE a
 
