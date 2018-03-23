@@ -822,7 +822,8 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 Terminated == \A self \in ProcSet: pc[self] = "Done"
 
-Invariant == Terminated => lucene.document.content = expected_doc
+Invariant == Terminated => /\ expected_doc  = NULL => lucene.document = NULL
+                           /\ expected_doc /= NULL => lucene.document.content = expected_doc
 
 =============================================================================
 \* Modification History
