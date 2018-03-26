@@ -128,7 +128,8 @@ begin
         lucene_document := ApplyBufferedOperations(lucene_buffer, lucene_document);
         lucene_buffer := <<>>;
             
-        LuceneUpdateVersionMap: (* TODO needs an invariant saying that the VM is >= Lucene and also contains the buffered ops *)
+        (* TODO Model the inner structure of the version map so this refresh can be
+        broken into the individual steps that occur concurrently with ongoing indexing. *)
                         
         versionMap_isUnsafe := FALSE;
         versionMap_needsSafeAccess := FALSE;
