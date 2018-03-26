@@ -381,6 +381,13 @@ begin
                 versionMap_entry := [ type |-> UPDATE, seqno |-> req.seqno ];
             else
                 versionMap_isUnsafe := TRUE;
+
+                if /\ versionMap_entry /= NULL
+                   /\ versionMap_entry.type = DELETE
+                   /\ versionMap_entry.seqno < req.seqno
+                then
+                    versionMap_entry := NULL; \* Desync bug #3 (no PR number yet)
+                end if;
             end if;
         end if;
         
