@@ -11,6 +11,8 @@ CONSTANTS DocContent
 
 CONSTANTS DocAutoIdTimestamp
 
+CONSTANTS DuplicationLimit
+
 (* We model the activity of a single document, since distinct documents
    (according to their IDs) are independent. Also each indexing operation
    occurs under a lock for that document ID, so there is not much concurrency
@@ -190,6 +192,7 @@ end process
    are processed in series because of the lock in the version map. *)
 process ConsumerProcess = "Consumer"
 variables
+    duplicationCount = 0,
     maxUnsafeAutoIdTimestamp \in {0, DocAutoIdTimestamp - 1, DocAutoIdTimestamp, DocAutoIdTimestamp + 1},
     req, plan,
     deleteFromLucene, currentlyDeleted,
@@ -206,18 +209,25 @@ begin
                 replication_requests := replication_requests \ {replication_request};
                 req := replication_request;
             or
+                await duplicationCount < DuplicationLimit;
+                duplicationCount := duplicationCount + 1;
+                
                 (* Process ADD and leave a duplicate RETRY_ADD for later *)
                 replication_requests := (replication_requests \ {replication_request})
                     \cup {[replication_request EXCEPT !.type = RETRY_ADD]};
                 req := replication_request;
             or
+                await duplicationCount < DuplicationLimit;
+                duplicationCount := duplicationCount + 1;
+
                 (* Process duplicate RETRY_ADD and leave the original ADD *)
                 req := [replication_request EXCEPT !.type = RETRY_ADD];
             end either;
         else
             req := replication_request;
             either
-                skip;
+                await duplicationCount < DuplicationLimit;
+                duplicationCount := duplicationCount + 1;
             or
                 replication_requests := replication_requests \ {replication_request};
             end either;
