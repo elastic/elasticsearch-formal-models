@@ -198,8 +198,30 @@ begin
   ConsumerLoop:
   while replication_requests /= {} do
     with replication_request \in replication_requests do
-        req := replication_request;
-        replication_requests := replication_requests \ {replication_request};
+        if replication_request.type = ADD
+        then
+            (* Never see two ADDs - if duplicated, one of them is a RETRY_ADD *)
+            either
+                (* Process ADD without duplication *)
+                replication_requests := replication_requests \ {replication_request};
+                req := replication_request;
+            or
+                (* Process ADD and leave a duplicate RETRY_ADD for later *)
+                replication_requests := (replication_requests \ {replication_request})
+                    \cup {[replication_request EXCEPT !.type = RETRY_ADD]};
+                req := replication_request;
+            or
+                (* Process duplicate RETRY_ADD and leave the original ADD *)
+                req := [replication_request EXCEPT !.type = RETRY_ADD];
+            end either;
+        else
+            req := replication_request;
+            either
+                skip;
+            or
+                replication_requests := replication_requests \ {replication_request};
+            end either;
+        end if;
     end with;
     
     if req.type = DELETE
