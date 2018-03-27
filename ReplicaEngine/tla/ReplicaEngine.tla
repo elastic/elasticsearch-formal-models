@@ -294,7 +294,7 @@ begin
             useLuceneUpdateDocument  := FALSE;
             indexIntoLucene          := TRUE;
         else
-            if FALSE = (req.type \in {ADD, RETRY_ADD})
+            if req.type \notin {ADD, RETRY_ADD}
             then
                 maxSeqNoOfNonAppendOnlyOperations := Max(maxSeqNoOfNonAppendOnlyOperations, req.seqno);
             end if;
