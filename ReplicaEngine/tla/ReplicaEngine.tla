@@ -173,12 +173,22 @@ begin
     end while;
 end process
 
+process UnsafeSeqnoIncreaserProcess = "UnsafeSeqnoIncreaserProcess"
+variables
+    maxSeqNoOfNonAppendOnlyOperations = 0,
+begin
+    UnsafeSeqnoIncreaserProcessLoop:
+    while pc["Consumer"] /= "Done" /\ maxSeqNoOfNonAppendOnlyOperations < request_count + 1 do
+        maxSeqNoOfNonAppendOnlyOperations := maxSeqNoOfNonAppendOnlyOperations + 1;
+    end while;
+end process
+
+
 (* The process that consumes replication requests for a particular document ID, which
    are processed in series because of the lock in the version map. *)
 process ConsumerProcess = "Consumer"
 variables
     maxUnsafeAutoIdTimestamp \in {0, DocAutoIdTimestamp - 1, DocAutoIdTimestamp, DocAutoIdTimestamp + 1},
-    maxSeqNoOfNonAppendOnlyOperations \in {0, 2, request_count + 1},
     req, plan,
     deleteFromLucene, currentlyDeleted,
     currentNotFoundOrDeleted, useLuceneUpdateDocument, indexIntoLucene,
