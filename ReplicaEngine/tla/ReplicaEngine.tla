@@ -90,7 +90,9 @@ process SafeAccessEnablerProcess = "SafeAccessEnabler"
 begin
     SafeAccessEnablerLoop:
     while pc["Consumer"] /= "Done" do
-        versionMap_needsSafeAccess := TRUE;
+        versionMap_needsSafeAccess := (versionMap_needsSafeAccess = FALSE);
+        (* Technically the only way this can go back to FALSE is via a refresh, but
+           we should not need this fact, so model both kinds of change. *)
     end while;
 end process;
 
