@@ -364,13 +364,13 @@ begin
             
                 compareIndexOpToLuceneDocBasedOnSeqNo: \* Label needed because of AwaitRefreshOnIndex label
                 
-                if req.seqno <= localCheckPoint                         \* TODO another bugfix
-                then                                                    \* TODO another bugfix
-                    (* OP_STALE_OR_EQUAL *)                             \* TODO another bugfix
-                    plan                     := "processButSkipLucene"; \* TODO another bugfix
-                    currentNotFoundOrDeleted := FALSE;                  \* TODO another bugfix
-                    useLuceneUpdateDocument  := FALSE;                  \* TODO another bugfix
-                    indexIntoLucene          := FALSE;                  \* TODO another bugfix
+                if req.seqno <= localCheckPoint                         \* PR #29276
+                then                                                    \* PR #29276
+                    (* OP_STALE_OR_EQUAL *)                             \* PR #29276
+                    plan                     := "processButSkipLucene"; \* PR #29276
+                    currentNotFoundOrDeleted := FALSE;                  \* PR #29276
+                    useLuceneUpdateDocument  := FALSE;                  \* PR #29276
+                    indexIntoLucene          := FALSE;                  \* PR #29276
                 elsif versionMap_entry /= NULL
                 then
                     (* Doc is in version map *)
