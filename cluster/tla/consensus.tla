@@ -51,6 +51,7 @@ VARIABLE currentClusterState
 VARIABLE lastAcceptedTerm
 VARIABLE lastAcceptedValue
 VARIABLE joinVotes
+VARIABLE allowElection
 VARIABLE electionWon
 VARIABLE publishPermitted
 VARIABLE publishVotes
@@ -62,6 +63,10 @@ ValidConfigs == SUBSET(Nodes) \ {{}}
 
 \* quorums correspond to majority of votes in a config
 IsQuorum(votes, config) == Cardinality(votes \cap config) * 2 > Cardinality(config)
+
+ElectionWon(n, votes) ==
+  /\ IsQuorum(votes, currentConfiguration[n])
+  /\ (lastAcceptedValue[n] /= Nil /\ lastAcceptedValue[n].type = Reconfigure) => IsQuorum(votes, lastAcceptedValue[n].val)
 
 \* checks whether two configurations only have intersecting quorums
 IntersectingQuorums(config1, config2) ==
@@ -77,6 +82,7 @@ Init == /\ messages = {}
         /\ lastAcceptedTerm = [n \in Nodes |-> Nil]
         /\ lastAcceptedValue = [n \in Nodes |-> Nil]
         /\ joinVotes = [n \in Nodes |-> {}]
+        /\ allowElection = [n \in Nodes |-> FALSE]
         /\ electionWon = [n \in Nodes |-> FALSE]
         /\ publishPermitted = [n \in Nodes |-> FALSE]
         /\ publishVotes = [n \in Nodes |-> {}]
@@ -94,6 +100,7 @@ HandleStartJoin(n, nm, t) ==
      IN
        /\ currentTerm' = [currentTerm EXCEPT ![n] = t]
        /\ publishPermitted' = [publishPermitted EXCEPT ![n] = TRUE]
+       /\ allowElection' = [allowElection EXCEPT ![n] = TRUE]
        /\ electionWon' = [electionWon EXCEPT ![n] = FALSE]
        /\ joinVotes' = [joinVotes EXCEPT ![n] = {}]
        /\ publishVotes' = [publishVotes EXCEPT ![n] = {}]
@@ -106,11 +113,12 @@ HandleStartJoin(n, nm, t) ==
 HandleJoinRequest(n, m) ==
   /\ m.method = Join
   /\ m.term = currentTerm[n]
+  /\ allowElection[n]
   /\ \/ /\ m.slot < firstUncommittedSlot[n]
      \/ /\ m.slot = firstUncommittedSlot[n]
         /\ (m.laTerm /= Nil => lastAcceptedTerm[n] /= Nil /\ m.laTerm <= lastAcceptedTerm[n])
   /\ joinVotes' = [joinVotes EXCEPT ![n] = @ \cup { m.source }]
-  /\ electionWon' = [electionWon EXCEPT ![n] = IsQuorum(joinVotes'[n], currentConfiguration[n])]
+  /\ electionWon' = [electionWon EXCEPT ![n] = ElectionWon(n, joinVotes'[n])]
   /\ IF electionWon'[n] /\ publishPermitted[n] /\ lastAcceptedTerm[n] /= Nil 
      THEN LET publishRequests == { [method  |-> PublishRequest,
                                     source  |-> n,
@@ -123,8 +131,9 @@ HandleJoinRequest(n, m) ==
        /\ publishPermitted' = [publishPermitted EXCEPT ![n] = FALSE]
      ELSE
        /\ UNCHANGED <<messages, publishPermitted>>
+  /\ Assert(electionWon'[n] /\ \lnot electionWon[n] => publishPermitted[n], "publishing permitted when winning election")
   /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, publishVotes,
-                 firstUncommittedSlot, lastAcceptedValue, lastAcceptedTerm>>
+                 firstUncommittedSlot, lastAcceptedValue, lastAcceptedTerm, allowElection>>
 
 \* client causes a cluster state change v
 ClientRequest(n, v) ==
@@ -142,13 +151,14 @@ ClientRequest(n, v) ==
      IN
        /\ publishPermitted' = [publishPermitted EXCEPT ![n] = FALSE]
        /\ messages' = messages \cup publishRequests
-       /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, electionWon,
+       /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, allowElection, electionWon,
                       firstUncommittedSlot, lastAcceptedValue, lastAcceptedTerm, joinVotes, publishVotes>>
 
 \* change the set of voters
 ChangeVoters(n, vs) ==
   /\ electionWon[n]
   /\ publishPermitted[n]
+  /\ IsQuorum(joinVotes[n], vs)
   /\ LET
        publishRequests == { [method  |-> PublishRequest,
                              source  |-> n,
@@ -159,7 +169,7 @@ ChangeVoters(n, vs) ==
      IN
        /\ publishPermitted' = [publishPermitted EXCEPT ![n] = FALSE]
        /\ messages' = messages \cup publishRequests
-       /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, electionWon,
+       /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, allowElection, electionWon,
                       firstUncommittedSlot, lastAcceptedValue, lastAcceptedTerm, joinVotes, publishVotes>>
 
 \* handle publish request m on node n
@@ -178,7 +188,7 @@ HandlePublishRequest(n, m) ==
                     slot    |-> m.slot]
      IN
        /\ messages' = messages \cup {response}
-       /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm,
+       /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, allowElection,
                       electionWon, firstUncommittedSlot, publishPermitted, joinVotes, publishVotes>>
 
 \* node n commits a change
@@ -200,7 +210,7 @@ HandlePublishResponse(n, m) ==
      ELSE
        UNCHANGED <<messages>>
   /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, electionWon,
-                   firstUncommittedSlot, lastAcceptedValue, lastAcceptedTerm,
+                   firstUncommittedSlot, lastAcceptedValue, lastAcceptedTerm, allowElection,
                    publishPermitted, joinVotes>>
 
 \* apply committed change to node n
@@ -208,6 +218,7 @@ HandleCommitRequest(n, m) ==
   /\ m.method = Commit
   /\ m.slot = firstUncommittedSlot[n]
   /\ m.term = lastAcceptedTerm[n]
+  /\ m.term >= currentTerm[n]
   /\ firstUncommittedSlot' = [firstUncommittedSlot EXCEPT ![n] = @ + 1]
   /\ lastAcceptedTerm' = [lastAcceptedTerm EXCEPT ![n] = Nil]
   /\ lastAcceptedValue' = [lastAcceptedValue EXCEPT ![n] = Nil]
@@ -215,14 +226,13 @@ HandleCommitRequest(n, m) ==
   /\ publishVotes' = [publishVotes EXCEPT ![n] = {}]
   /\ IF lastAcceptedValue[n].type = Reconfigure THEN
        /\ currentConfiguration' = [currentConfiguration EXCEPT ![n] = lastAcceptedValue[n].val]
-       /\ electionWon' = [electionWon EXCEPT ![n] = IsQuorum(joinVotes[n], currentConfiguration'[n])]
        /\ UNCHANGED <<currentClusterState>>
      ELSE
        /\ Assert(lastAcceptedValue[n].type = ApplyCSDiff, "unexpected type")
        /\ Assert(DOMAIN(lastAcceptedValue[n].val) = {currentClusterState[n]}, "diff mismatch")
        /\ currentClusterState' = [currentClusterState EXCEPT ![n] = lastAcceptedValue[n].val[@]] \* apply diff
-       /\ UNCHANGED <<currentConfiguration, electionWon>>
-  /\ UNCHANGED <<currentTerm, joinVotes, messages>>
+       /\ UNCHANGED <<currentConfiguration>>
+  /\ UNCHANGED <<currentTerm, joinVotes, messages, electionWon, allowElection>>
 
 \* node n captures current state and sends a catch up message
 SendCatchupResponse(n) ==
@@ -235,7 +245,7 @@ SendCatchupResponse(n) ==
        /\ messages' = messages \cup { catchupMessage }
        /\ UNCHANGED <<currentClusterState, currentConfiguration, currentTerm, 
                       lastAcceptedValue, electionWon, firstUncommittedSlot, publishPermitted,
-                      joinVotes, lastAcceptedTerm, publishVotes>>
+                      joinVotes, lastAcceptedTerm, publishVotes, allowElection>>
 
 \* node n handles a catchup message
 HandleCatchupResponse(n, m) ==
@@ -250,11 +260,12 @@ HandleCatchupResponse(n, m) ==
   /\ currentClusterState' = [currentClusterState EXCEPT ![n] = m.state]
   /\ joinVotes' = [joinVotes EXCEPT ![n] = {}]
   /\ publishVotes' = [publishVotes EXCEPT ![n] = {}]
-  /\ UNCHANGED <<currentTerm, messages>>
+  /\ UNCHANGED <<currentTerm, messages, allowElection>>
   
 
 \* crash/restart node n (loses ephemeral state)
 RestartNode(n) ==
+  /\ allowElection' = [allowElection EXCEPT ![n] = FALSE]
   /\ electionWon' = [electionWon EXCEPT ![n] = FALSE]
   /\ publishPermitted' = [publishPermitted EXCEPT ![n] = FALSE]
   /\ joinVotes' = [joinVotes EXCEPT ![n] = {}]
@@ -289,7 +300,6 @@ OneMasterPerTerm ==
     /\ electionWon[n1]
     /\ electionWon[n2]
     /\ currentTerm[n1] = currentTerm[n2]
-    /\ IntersectingQuorums(currentConfiguration[n1], currentConfiguration[n2])
     => n1 = n2
 
 LogMatching ==
@@ -302,7 +312,8 @@ SingleNodeInvariant ==
   \A n \in Nodes :
     /\ (lastAcceptedTerm[n] = Nil) = (lastAcceptedValue[n] = Nil)
     /\ lastAcceptedTerm[n] /= Nil => (lastAcceptedTerm[n] <= currentTerm[n])
-    /\ electionWon[n] = IsQuorum(joinVotes[n], currentConfiguration[n]) \* cached value is consistent
+    /\ (electionWon[n] => allowElection[n])
+    /\ electionWon[n] = ElectionWon(n, joinVotes[n]) \* cached value is consistent
     /\ electionWon[n] /\ publishPermitted[n] => lastAcceptedValue[n] = Nil
 
 LogMatchingMessages ==
@@ -312,6 +323,13 @@ LogMatchingMessages ==
     /\ m1.slot = m2.slot
     /\ m1.term = m2.term
     => m1.value = m2.value
+
+OneMasterPerTermMessages ==
+  \A m1, m2 \in messages:
+    /\ m1.method = PublishRequest
+    /\ m2.method = PublishRequest
+    /\ m1.term = m2.term
+    => m1.source = m2.source
 
 SafeCatchupMessages ==
   \A m1, m2 \in messages:
