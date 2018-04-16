@@ -26,6 +26,23 @@ The cluster consensus Isabelle model consists of the following theories:
 - [The proof that each slot is consistent, based on Lamport's Synod algorithm](cluster/isabelle/OneSlot.thy)
 - [The proof that the implementation ensures consistency](cluster/isabelle/Zen.thy)
 
+### Replica engine
+
+A TLA+ model of how the
+[engine](https://github.com/elastic/elasticsearch/blob/00fd73acc4a2991f96438f8c1948016c5b9eefb2/server/src/main/java/org/elasticsearch/index/engine/InternalEngine.java)
+handles replication requests.
+
+- [TLA+ specification](ReplicaEngine/tla/ReplicaEngine.tla)
+- [TLC model checking configuration](ReplicaEngine/tla/ReplicaEngine.toolbox/ReplicaEngine___model.launch)
+
+### Zen with terms
+
+An alternative idea for improving the consistency of cluster state updates,
+effectively by adding the notion of a _term_ to the existing Zen algorithm.
+
+- [TLA+ specification](ZenWithTerms/tla/ZenWithTerms.tla)
+- [TLC model checking configuration](ZenWithTerms/tla/ZenWithTerms.toolbox/ZenWithTerms___model.launch)
+
 ## How to edit/run TLA+:
 
 - Install the [TLA Toolbox](http://research.microsoft.com/en-us/um/people/lamport/tla/toolbox.html)
