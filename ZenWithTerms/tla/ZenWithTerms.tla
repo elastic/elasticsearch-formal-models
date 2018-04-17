@@ -171,6 +171,7 @@ HandlePublishRequest(n, m) ==
 
 \* node n commits a change
 HandlePublishResponse(n, m) ==
+  /\ electionWon[n]
   /\ m.method = PublishResponse
   /\ m.term = currentTerm[n]
   /\ m.version = lastPublishedVersion[n]
