@@ -43,6 +43,8 @@ VARIABLE publishVotes
 
 Terms == Nat
 
+Versions == Nat
+
 \* set of valid configurations (i.e. the set of all non-empty subsets of Nodes)
 ValidConfigs == SUBSET(Nodes) \ {{}}
 
@@ -112,26 +114,27 @@ HandleJoinRequest(n, m) ==
                  lastAcceptedVersion, lastAcceptedValue, lastAcceptedConfiguration,
                  lastAcceptedTerm, startedJoinSinceLastReboot, lastPublishedConfiguration>>
 
-\* client causes a cluster state change v with configuration vs
-ClientRequest(n, v, vs) ==
+\* client causes a cluster state change val with configuration cfg
+ClientRequest(n, t, v, val, cfg) ==
   /\ electionWon[n]
   /\ lastPublishedVersion[n] = lastAcceptedVersion[n] \* means we have the last published value / config (useful for CAS operations, where we need to read the previous value first)
-  /\ vs /= lastAcceptedConfiguration[n] => lastCommittedConfiguration[n] = lastAcceptedConfiguration[n] \* only allow reconfiguration if there is not already a reconfiguration in progress
-  /\ IsQuorum(joinVotes[n], vs) \* only allow reconfiguration if we have a quorum of (join) votes for the new config
+  /\ t = currentTerm[n]
+  /\ v > lastPublishedVersion[n]
+  /\ cfg /= lastAcceptedConfiguration[n] => lastCommittedConfiguration[n] = lastAcceptedConfiguration[n] \* only allow reconfiguration if there is not already a reconfiguration in progress
+  /\ IsQuorum(joinVotes[n], cfg) \* only allow reconfiguration if we have a quorum of (join) votes for the new config
   /\ LET
-       newPublishVersion == lastPublishedVersion[n] + 1
        publishRequests == { [method   |-> PublishRequest,
                              source   |-> n,
                              dest     |-> ns,
-                             term     |-> currentTerm[n],
-                             version  |-> newPublishVersion,
-                             value    |-> v,
-                             config   |-> vs,
+                             term     |-> t,
+                             version  |-> v,
+                             value    |-> val,
+                             config   |-> cfg,
                              commConf |-> lastCommittedConfiguration[n]] : ns \in Nodes }
         newEntry == [prevT |-> lastAcceptedTerm[n],
                      prevV |-> lastAcceptedVersion[n],
-                     nextT |-> currentTerm[n],
-                     nextV |-> newPublishVersion]
+                     nextT |-> t,
+                     nextV |-> v]
         matchingElems == { e \in descendant : 
                                 /\ e.nextT = newEntry.prevT
                                 /\ e.nextV = newEntry.prevV }
@@ -141,8 +144,8 @@ ClientRequest(n, v, vs) ==
                      nextV |-> newEntry.nextV] : e \in matchingElems }
      IN
        /\ descendant' = descendant \cup {newEntry} \cup newTransitiveElems
-       /\ lastPublishedVersion' = [lastPublishedVersion EXCEPT ![n] = newPublishVersion]
-       /\ lastPublishedConfiguration' = [lastPublishedConfiguration EXCEPT ![n] = vs]
+       /\ lastPublishedVersion' = [lastPublishedVersion EXCEPT ![n] = v]
+       /\ lastPublishedConfiguration' = [lastPublishedConfiguration EXCEPT ![n] = cfg]
        /\ publishVotes' = [publishVotes EXCEPT ![n] = {}] \* publishVotes are only counted per publish version
        /\ messages' = messages \cup publishRequests
        /\ UNCHANGED <<startedJoinSinceLastReboot, lastCommittedConfiguration, currentTerm, electionWon,
@@ -220,7 +223,7 @@ RestartNode(n) ==
 Next ==
   \/ \E n, nm \in Nodes : \E t \in Terms : HandleStartJoin(n, nm, t)
   \/ \E m \in messages : HandleJoinRequest(m.dest, m)
-  \/ \E n \in Nodes : \E v \in Values : \E vs \in ValidConfigs : ClientRequest(n, v, vs)
+  \/ \E n \in Nodes : \E t \in Terms : \E v \in Versions : \E val \in Values : \E vs \in ValidConfigs : ClientRequest(n, t, v, val, vs)
   \/ \E m \in messages : HandlePublishRequest(m.dest, m)
   \/ \E m \in messages : HandlePublishResponse(m.dest, m)
   \/ \E m \in messages : HandleCommitRequest(m.dest, m)
