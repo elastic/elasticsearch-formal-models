@@ -30,6 +30,7 @@
         <listEntry value="1CommittedValuesDescendantsFromInitialValue"/>
         <listEntry value="1DescendantRelationIsStrictlyOrdered"/>
         <listEntry value="1NewerOpsBasedOnOlderCommittedOps"/>
+        <listEntry value="1CommitHasQuorumVsPreviousCommittedConfiguration"/>
     </listAttribute>
     <listAttribute key="modelCorrectnessProperties"/>
     <stringAttribute key="modelExpressionEval" value=""/>
