@@ -203,6 +203,7 @@ HandleCommitRequest(n, m) ==
   /\ m.term = currentTerm[n]
   /\ m.term = lastAcceptedTerm[n]
   /\ m.version = lastAcceptedVersion[n]
+  /\ (electionWon[n] => lastAcceptedVersion[n] = lastPublishedVersion[n])
   /\ lastCommittedConfiguration' = [lastCommittedConfiguration EXCEPT ![n] = lastAcceptedConfiguration[n]]
   /\ UNCHANGED <<currentTerm, joinVotes, messages, lastAcceptedTerm, lastAcceptedValue, startedJoinSinceLastReboot, descendant,
                  electionWon, lastAcceptedConfiguration, lastAcceptedVersion, lastPublishedVersion, publishVotes,
@@ -296,6 +297,17 @@ CommittedValuesDescendantsFromInitialValue ==
       CommittedPublishRequest(m)
     =>
       [prevT |-> 0, prevV |-> 0, nextT |-> m.term, nextV |-> m.version] \in descendant
+
+CommitHasQuorumVsPreviousCommittedConfiguration ==
+  \A mc \in messages: mc.method = Commit
+    => (\A mprq \in messages: (/\ mprq.method  = PublishRequest
+                               /\ mprq.term    = mc.term
+                               /\ mprq.version = mc.version) 
+
+          => IsQuorum({mprs.source: mprs \in {mprs \in messages: /\ mprs.method = PublishResponse
+                                                                 /\ mprs.term = mprq.term
+                                                                 /\ mprs.version = mprq.version
+                      }}, mprq.commConf))
 
 \* State-exploration limits
 StateConstraint ==
