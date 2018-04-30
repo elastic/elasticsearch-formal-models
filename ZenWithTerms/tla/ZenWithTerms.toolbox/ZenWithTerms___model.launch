@@ -31,6 +31,7 @@
         <listEntry value="1DescendantRelationIsStrictlyOrdered"/>
         <listEntry value="1NewerOpsBasedOnOlderCommittedOps"/>
         <listEntry value="1CommitHasQuorumVsPreviousCommittedConfiguration"/>
+        <listEntry value="1P2bInvariant"/>
     </listAttribute>
     <listAttribute key="modelCorrectnessProperties"/>
     <stringAttribute key="modelExpressionEval" value=""/>
