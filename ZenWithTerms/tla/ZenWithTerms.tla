@@ -309,6 +309,11 @@ CommitHasQuorumVsPreviousCommittedConfiguration ==
                                                                  /\ mprs.version = mprq.version
                       }}, mprq.commConf))
 
+P2bInvariant ==
+  \A mc \in messages: mc.method = Commit
+    => (\A mprq \in messages: mprq.method = PublishRequest
+            => (mprq.term > mc.term => mprq.version > mc.version))
+
 \* State-exploration limits
 StateConstraint ==
   /\ \A n \in Nodes: IF currentTerm[n] <= 1 THEN lastPublishedVersion[n] <= 2 ELSE lastPublishedVersion[n] <= 3
