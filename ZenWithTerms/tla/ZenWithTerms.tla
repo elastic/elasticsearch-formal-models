@@ -22,8 +22,13 @@ CONSTANTS
 
 \* Set of requests and responses sent between nodes.
 VARIABLE messages
+
 \* Transitive closure of value updates as done by leaders 
 VARIABLE descendant
+
+\* Values to bootstrap the cluster
+VARIABLE initialConfiguration
+VARIABLE initialValue
 
 \* node state (map from node id to state)
 VARIABLE currentTerm
@@ -38,8 +43,6 @@ VARIABLE electionWon
 VARIABLE lastPublishedVersion
 VARIABLE lastPublishedConfiguration
 VARIABLE publishVotes
-VARIABLE initialConfiguration
-VARIABLE initialValue
 
 ----
 
@@ -53,13 +56,19 @@ ValidConfigs == SUBSET(Nodes) \ {{}}
 \* quorums correspond to majority of votes in a config
 IsQuorum(votes, config) == Cardinality(votes \cap config) * 2 > Cardinality(config)
 
-ElectionWon(n, votes) ==
+IsElectionQuorum(n, votes) ==
   /\ IsQuorum(votes, lastCommittedConfiguration[n])
   /\ IsQuorum(votes, lastAcceptedConfiguration[n])
+
+IsPublishQuorum(n, votes) ==
+  /\ IsQuorum(votes, lastCommittedConfiguration[n])
+  /\ IsQuorum(votes, lastPublishedConfiguration[n])
 
 \* initial model state
 Init == /\ messages = {}
         /\ descendant = {}
+        /\ initialConfiguration \in ValidConfigs
+        /\ initialValue \in Values
         /\ currentTerm = [n \in Nodes |-> 0]
         /\ lastCommittedConfiguration = [n \in Nodes |-> {}] \* empty config
         /\ lastAcceptedTerm = [n \in Nodes |-> 0]
@@ -72,21 +81,26 @@ Init == /\ messages = {}
         /\ lastPublishedVersion = [n \in Nodes |-> 0]
         /\ lastPublishedConfiguration = [n \in Nodes |-> lastCommittedConfiguration[n]]
         /\ publishVotes = [n \in Nodes |-> {}]
-        /\ initialConfiguration \in ValidConfigs
-        /\ initialValue \in Values
 
-SeedInitialState(n) ==
+\* Bootstrap node n with the initial state and config 
+SetInitialState(n) ==
   /\ lastAcceptedVersion[n] = 0 \* have not accepted any previous state
-  /\ lastAcceptedVersion' = [lastAcceptedVersion EXCEPT ![n] = @ + 1]
-  /\ lastAcceptedConfiguration' = [lastAcceptedConfiguration EXCEPT ![n] = initialConfiguration]
-  /\ lastAcceptedValue' = [lastAcceptedValue EXCEPT ![n] = initialValue]
-  /\ lastCommittedConfiguration' = [lastCommittedConfiguration EXCEPT ![n] = initialConfiguration]
   /\ Assert(lastAcceptedTerm[n] = 0, "lastAcceptedTerm should be 0")
+  /\ Assert(lastAcceptedConfiguration[n] = {}, "lastAcceptedConfiguration should be empty")
+  /\ Assert(lastCommittedConfiguration[n] = {}, "lastCommittedConfiguration should be empty")
   /\ Assert(lastPublishedVersion[n] = 0, "lastPublishedVersion should be 0")
   /\ Assert(lastPublishedConfiguration[n] = {}, "lastPublishedConfiguration should be empty")
   /\ Assert(electionWon[n] = FALSE, "electionWon should be FALSE")
   /\ Assert(joinVotes[n] = {}, "joinVotes should be empty")
   /\ Assert(publishVotes[n] = {}, "publishVotes should be empty")
+  /\ lastAcceptedVersion' = [lastAcceptedVersion EXCEPT ![n] = @ + 1]
+  /\ lastAcceptedConfiguration' = [lastAcceptedConfiguration EXCEPT ![n] = initialConfiguration]
+  /\ lastAcceptedValue' = [lastAcceptedValue EXCEPT ![n] = initialValue]
+  /\ lastCommittedConfiguration' = [lastCommittedConfiguration EXCEPT ![n] = initialConfiguration]
+  /\ Assert(lastAcceptedTerm[n] = 0, "lastAcceptedTerm should be 0")
+  /\ Assert(lastAcceptedVersion'[n] = 1, "lastAcceptedVersion should be 1")
+  /\ Assert(lastAcceptedConfiguration'[n] /= {}, "lastAcceptedConfiguration should be non-empty")
+  /\ Assert(lastCommittedConfiguration'[n] /= {}, "lastCommittedConfiguration should be non-empty")
   /\ UNCHANGED <<descendant, initialConfiguration, initialValue, messages, lastAcceptedTerm,
                  lastPublishedVersion, lastPublishedConfiguration, electionWon, joinVotes, publishVotes,
                  startedJoinSinceLastReboot, currentTerm>>
@@ -115,16 +129,16 @@ HandleStartJoin(n, nm, t) ==
 
 \* node n handles a join request and checks if it has received enough joins (= votes)
 \* for its term to be elected as master
-HandleJoinRequest(n, m) ==
+HandleJoin(n, m) ==
   /\ m.method = Join
   /\ m.term = currentTerm[n]
-  /\ lastAcceptedVersion[n] > 0 \* initial state is set
   /\ startedJoinSinceLastReboot[n]
   /\ \/ m.laTerm < lastAcceptedTerm[n]
      \/ /\ m.laTerm = lastAcceptedTerm[n]
         /\ m.laVersion <= lastAcceptedVersion[n]
+  /\ lastAcceptedVersion[n] > 0 \* initial state is set
   /\ joinVotes' = [joinVotes EXCEPT ![n] = @ \cup { m.source }]
-  /\ electionWon' = [electionWon EXCEPT ![n] = ElectionWon(n, joinVotes'[n])]
+  /\ electionWon' = [electionWon EXCEPT ![n] = IsElectionQuorum(n, joinVotes'[n])]
   /\ IF electionWon[n] = FALSE /\ electionWon'[n]
      THEN
        \* initiating publish version with last accepted version to enable client requests
@@ -137,7 +151,7 @@ HandleJoinRequest(n, m) ==
                  initialConfiguration, initialValue>>
 
 \* client causes a cluster state change val with configuration cfg
-ClientRequest(n, t, v, val, cfg) ==
+HandleClientValue(n, t, v, val, cfg) ==
   /\ electionWon[n]
   /\ lastPublishedVersion[n] = lastAcceptedVersion[n] \* means we have the last published value / config (useful for CAS operations, where we need to read the previous value first)
   /\ t = currentTerm[n]
@@ -198,14 +212,13 @@ HandlePublishRequest(n, m) ==
 
 \* node n commits a change
 HandlePublishResponse(n, m) ==
-  /\ electionWon[n]
   /\ m.method = PublishResponse
+  /\ electionWon[n]
   /\ m.term = currentTerm[n]
   /\ m.version = lastPublishedVersion[n]
   /\ publishVotes' = [publishVotes EXCEPT ![n] = @ \cup {m.source}]
   /\ IF
-       /\ IsQuorum(publishVotes'[n], lastCommittedConfiguration[n])
-       /\ IsQuorum(publishVotes'[n], lastPublishedConfiguration[n])
+       IsPublishQuorum(n, publishVotes'[n])
      THEN
        LET
          commitRequests == { [method   |-> Commit,
@@ -223,7 +236,7 @@ HandlePublishResponse(n, m) ==
                    initialValue>>
 
 \* apply committed configuration to node n
-HandleCommitRequest(n, m) ==
+HandleCommit(n, m) ==
   /\ m.method = Commit
   /\ m.term = currentTerm[n]
   /\ m.term = lastAcceptedTerm[n]
@@ -236,9 +249,9 @@ HandleCommitRequest(n, m) ==
 
 \* crash/restart node n (loses ephemeral state)
 RestartNode(n) ==
-  /\ electionWon' = [electionWon EXCEPT ![n] = FALSE]
-  /\ startedJoinSinceLastReboot' = [startedJoinSinceLastReboot EXCEPT ![n] = FALSE]
   /\ joinVotes' = [joinVotes EXCEPT ![n] = {}]
+  /\ startedJoinSinceLastReboot' = [startedJoinSinceLastReboot EXCEPT ![n] = FALSE]
+  /\ electionWon' = [electionWon EXCEPT ![n] = FALSE]
   /\ lastPublishedVersion' = [lastPublishedVersion EXCEPT ![n] = 0]
   /\ lastPublishedConfiguration' = [lastPublishedConfiguration EXCEPT ![n] = lastAcceptedConfiguration[n]]
   /\ publishVotes' = [publishVotes EXCEPT ![n] = {}]
@@ -248,13 +261,13 @@ RestartNode(n) ==
 
 \* next-step relation
 Next ==
-  \/ \E n \in Nodes : SeedInitialState(n)
+  \/ \E n \in Nodes : SetInitialState(n)
   \/ \E n, nm \in Nodes : \E t \in Terms : HandleStartJoin(n, nm, t)
-  \/ \E m \in messages : HandleJoinRequest(m.dest, m)
-  \/ \E n \in Nodes : \E t \in Terms : \E v \in Versions : \E val \in Values : \E vs \in ValidConfigs : ClientRequest(n, t, v, val, vs)
+  \/ \E m \in messages : HandleJoin(m.dest, m)
+  \/ \E n \in Nodes : \E t \in Terms : \E v \in Versions : \E val \in Values : \E vs \in ValidConfigs : HandleClientValue(n, t, v, val, vs)
   \/ \E m \in messages : HandlePublishRequest(m.dest, m)
   \/ \E m \in messages : HandlePublishResponse(m.dest, m)
-  \/ \E m \in messages : HandleCommitRequest(m.dest, m)
+  \/ \E m \in messages : HandleCommit(m.dest, m)
   \/ \E n \in Nodes : RestartNode(n)
 
 ----
@@ -264,7 +277,7 @@ Next ==
 SingleNodeInvariant ==
   \A n \in Nodes :
     /\ lastAcceptedTerm[n] <= currentTerm[n]
-    /\ electionWon[n] = ElectionWon(n, joinVotes[n]) \* cached value is consistent
+    /\ electionWon[n] = IsElectionQuorum(n, joinVotes[n]) \* cached value is consistent
     /\ IF electionWon[n] THEN lastPublishedVersion[n] >= lastAcceptedVersion[n] ELSE lastPublishedVersion[n] = 0
     /\ electionWon[n] => startedJoinSinceLastReboot[n]
     /\ publishVotes[n] /= {} => electionWon[n]
