@@ -562,16 +562,16 @@ MaybeMarkPC(incomingTerm, n, globalCP) ==
     
 (* 
 `^\bf Note on handling replication requests with higher primary terms^'
-If replica receives replication request with the primary term greater than its current primary term, 
+If a replica receives a replication request with a primary term greater than its current primary term, 
 it means that new primary was promoted. The `^na\"ive^' handling of this case would be to forget all translog
 operations above global checkpoint, reset local checkpoint to global checkpoint and await replay 
 of operations above global checkpoint from the newly promoted primary.
 However, this approach does not work, because newly promoted primary might fail during resync process
 and if our replica is promoted to primary - it may miss operations above global checkpoint, effectively 
-loosing acknowledged writes.
+losing acknowledged writes.
 
 That's why we preserve existing entries in translog above global checkpoint but mark them as 
-pending confirmation. During operations replay, replica replaces it translog entry with the entry received 
+pending confirmation. During operations replay, replica replaces its translog entry with the entry received 
 from the primary (which can be noop) and resets pending confirmation flag. 
 *)
 \* Replication request arrives on node n with message m
