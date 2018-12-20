@@ -1,30 +1,22 @@
 # Formal models of core Elasticsearch algorithms
 
-This repository contains formal models of core [Elasticsearch](https://github.com/elastic/elasticsearch) algorithms and is directly related to ongoing implementation efforts around [data replication](https://github.com/elastic/elasticsearch/issues/10708) and cluster consensus. We consider this work-in-progress: Models as well as implementations are still evolving and might differ in substantial ways. The formal models mainly serve to illustrate some of the high-level concepts and help to validate resiliency-related aspects.
+This repository contains formal models of core [Elasticsearch](https://github.com/elastic/elasticsearch) algorithms and is directly related to implementation efforts around [data replication](https://github.com/elastic/elasticsearch/issues/10708) and [cluster coordination](https://github.com/elastic/elasticsearch/issues/32006). The models in this repository might represent past, current and future designs of Elasticsearch and can differ to their implementations in substantial ways. The formal models mainly serve to illustrate some of the high-level concepts and help to validate resiliency-related aspects.
 
 ## Models
 
-### Data replication
+### Cluster coordination model
 
-The data replication model consists of two files:
+The cluster coordination TLA+ model ensures the consistency of cluster state updates and represents the core [cluster coordination](https://github.com/elastic/elasticsearch/issues/32006) and metadata replication algorithm implemented in Elasticsearch 7.0. It consists of two files:
+
+- [TLA+ specification](ZenWithTerms/tla/ZenWithTerms.tla) which has a [direct one-to-one implementation in Elasticsearch](https://github.com/elastic/elasticsearch/blob/master/server/src/main/java/org/elasticsearch/cluster/coordination/CoordinationState.java)
+- [TLC model checking configuration](ZenWithTerms/tla/ZenWithTerms.toolbox/ZenWithTerms___model.launch)
+
+### Data replication model
+
+The data replication TLA+ model describes the Elasticsearch [sequence number](https://github.com/elastic/elasticsearch/issues/10708) based data replication approach, implemented since Elasticsearch 6.0, which consists of two files:
 
 - [TLA+ specification](data/tla/replication.tla)
 - [TLC model checking configuration](data/tla/replication.toolbox/replication___model.launch)
-
-### Cluster consensus
-
-The cluster consensus TLA+ model consists of two files:
-
-- [TLA+ specification](cluster/tla/consensus.tla)
-- [TLC model checking configuration](cluster/tla/consensus.toolbox/consensus___model.launch)
-
-The cluster consensus Isabelle model consists of the following theories:
-
-- [Basic definitions](cluster/isabelle/Preliminaries.thy)
-- [An implementation in functional style](cluster/isabelle/Implementation.thy)
-- [An implementation in monadic style, along with a proof it's equivalent to the previous](cluster/isabelle/Monadic.thy)
-- [The proof that each slot is consistent, based on Lamport's Synod algorithm](cluster/isabelle/OneSlot.thy)
-- [The proof that the implementation ensures consistency](cluster/isabelle/Zen.thy)
 
 ### Replica engine
 
@@ -35,13 +27,20 @@ handles replication requests.
 - [TLA+ specification](ReplicaEngine/tla/ReplicaEngine.tla)
 - [TLC model checking configuration](ReplicaEngine/tla/ReplicaEngine.toolbox/ReplicaEngine___model.launch)
 
-### Zen with terms
+### Alternative cluster coordination model
 
-An alternative idea for improving the consistency of cluster state updates,
-effectively by adding the notion of a _term_ to the existing Zen algorithm.
+The alternative cluster coordination TLA+ model consists of two files:
 
-- [TLA+ specification](ZenWithTerms/tla/ZenWithTerms.tla)
-- [TLC model checking configuration](ZenWithTerms/tla/ZenWithTerms.toolbox/ZenWithTerms___model.launch)
+- [TLA+ specification](cluster/tla/consensus.tla)
+- [TLC model checking configuration](cluster/tla/consensus.toolbox/consensus___model.launch)
+
+The alternative cluster consensus Isabelle model consists of the following theories:
+
+- [Basic definitions](cluster/isabelle/Preliminaries.thy)
+- [An implementation in functional style](cluster/isabelle/Implementation.thy)
+- [An implementation in monadic style, along with a proof it's equivalent to the previous](cluster/isabelle/Monadic.thy)
+- [The proof that each slot is consistent, based on Lamport's Synod algorithm](cluster/isabelle/OneSlot.thy)
+- [The proof that the implementation ensures consistency](cluster/isabelle/Zen.thy)
 
 ## How to edit/run TLA+:
 
