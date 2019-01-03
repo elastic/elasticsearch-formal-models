@@ -19,7 +19,7 @@
     <stringAttribute key="modelBehaviorNext" value="Next"/>
     <stringAttribute key="modelBehaviorSpec" value=""/>
     <intAttribute key="modelBehaviorSpecType" value="2"/>
-    <stringAttribute key="modelBehaviorVars" value="lastAcceptedTerm, initialConfiguration, messages, initialValue, lastPublishedConfiguration, lastPublishedVersion, electionWon, lastCommittedConfiguration, startedJoinSinceLastReboot, publishVotes, currentTerm, lastAcceptedVersion, descendant, joinVotes, initialCommittedVersion, lastAcceptedConfiguration, lastAcceptedValue"/>
+    <stringAttribute key="modelBehaviorVars" value="lastAcceptedTerm, initialConfiguration, messages, initialValue, lastPublishedConfiguration, lastPublishedVersion, electionWon, lastCommittedConfiguration, startedJoinSinceLastReboot, publishVotes, currentTerm, lastAcceptedVersion, descendant, joinVotes, lastAcceptedConfiguration, initialAcceptedVersion, lastAcceptedValue"/>
     <stringAttribute key="modelComments" value=""/>
     <booleanAttribute key="modelCorrectnessCheckDeadlock" value="true"/>
     <listAttribute key="modelCorrectnessInvariants">
