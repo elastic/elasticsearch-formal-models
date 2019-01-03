@@ -97,16 +97,13 @@ SetInitialState(n) ==
   /\ Assert(electionWon[n] = FALSE, "electionWon should be FALSE")
   /\ Assert(joinVotes[n] = {}, "joinVotes should be empty")
   /\ Assert(publishVotes[n] = {}, "publishVotes should be empty")
-  /\ lastAcceptedVersion' = [lastAcceptedVersion EXCEPT ![n] = @ + 1]
   /\ lastAcceptedConfiguration' = [lastAcceptedConfiguration EXCEPT ![n] = initialConfiguration]
   /\ lastAcceptedValue' = [lastAcceptedValue EXCEPT ![n] = initialValue]
   /\ lastCommittedConfiguration' = [lastCommittedConfiguration EXCEPT ![n] = initialConfiguration]
   /\ Assert(lastAcceptedTerm[n] = 0, "lastAcceptedTerm should be 0")
-  /\ Assert(lastAcceptedVersion'[n] > 0, "lastAcceptedVersion should be positive")
-  /\ Assert(lastAcceptedVersion'[n] = lastAcceptedVersion[n] + 1, "lastAcceptedVersion should be incremented")
   /\ Assert(lastAcceptedConfiguration'[n] /= {}, "lastAcceptedConfiguration should be non-empty")
   /\ Assert(lastCommittedConfiguration'[n] /= {}, "lastCommittedConfiguration should be non-empty")
-  /\ UNCHANGED <<descendant, initialConfiguration, initialValue, messages, lastAcceptedTerm,
+  /\ UNCHANGED <<descendant, initialConfiguration, initialValue, messages, lastAcceptedTerm, lastAcceptedVersion,
                  lastPublishedVersion, lastPublishedConfiguration, electionWon, joinVotes, publishVotes,
                  startedJoinSinceLastReboot, currentTerm, initialAcceptedVersions>>
 
