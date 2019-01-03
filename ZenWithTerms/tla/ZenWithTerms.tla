@@ -29,7 +29,7 @@ VARIABLE descendant
 \* Values to bootstrap the cluster
 VARIABLE initialConfiguration
 VARIABLE initialValue
-VARIABLE initialCommittedVersion
+VARIABLE initialAcceptedVersions
 
 \* node state (map from node id to state)
 VARIABLE currentTerm
@@ -73,10 +73,11 @@ Init == /\ messages = {}
         /\ descendant = {}
         /\ initialConfiguration \in ValidConfigs
         /\ initialValue \in Values
+        /\ initialAcceptedVersions \in [Nodes -> InitialVersions]
         /\ currentTerm = [n \in Nodes |-> 0]
         /\ lastCommittedConfiguration = [n \in Nodes |-> {}] \* empty config
         /\ lastAcceptedTerm = [n \in Nodes |-> 0]
-        /\ lastAcceptedVersion \in [Nodes -> InitialVersions]
+        /\ lastAcceptedVersion = initialAcceptedVersions
         /\ lastAcceptedValue \in {[n \in Nodes |-> v] : v \in Values} \* all agree on initial value
         /\ lastAcceptedConfiguration = [n \in Nodes |-> lastCommittedConfiguration[n]]
         /\ joinVotes = [n \in Nodes |-> {}]
@@ -85,12 +86,6 @@ Init == /\ messages = {}
         /\ lastPublishedVersion = [n \in Nodes |-> 0]
         /\ lastPublishedConfiguration = [n \in Nodes |-> lastCommittedConfiguration[n]]
         /\ publishVotes = [n \in Nodes |-> {}]
-        /\ initialCommittedVersion
-                = LET committedVersions == { version \in InitialVersions
-                                                    : \E votes \in SUBSET(initialConfiguration)
-                                                      : /\ IsQuorum(votes, initialConfiguration)
-                                                        /\ \A n \in votes : version <= lastAcceptedVersion[n] }
-                  IN  CHOOSE vmax \in committedVersions : \A v \in committedVersions : v <= vmax
 
 \* Bootstrap node n with the initial state and config 
 SetInitialState(n) ==
@@ -113,7 +108,7 @@ SetInitialState(n) ==
   /\ Assert(lastCommittedConfiguration'[n] /= {}, "lastCommittedConfiguration should be non-empty")
   /\ UNCHANGED <<descendant, initialConfiguration, initialValue, messages, lastAcceptedTerm,
                  lastPublishedVersion, lastPublishedConfiguration, electionWon, joinVotes, publishVotes,
-                 startedJoinSinceLastReboot, currentTerm, initialCommittedVersion>>
+                 startedJoinSinceLastReboot, currentTerm, initialAcceptedVersions>>
 
 \* Send join request from node n to node nm for term t
 HandleStartJoin(n, nm, t) ==
@@ -135,7 +130,7 @@ HandleStartJoin(n, nm, t) ==
        /\ publishVotes' = [publishVotes EXCEPT ![n] = {}]
        /\ messages' = messages \cup { joinRequest }
        /\ UNCHANGED <<lastCommittedConfiguration, lastAcceptedConfiguration, lastAcceptedVersion,
-                      lastAcceptedValue, lastAcceptedTerm, descendant, initialConfiguration, initialValue, initialCommittedVersion>>
+                      lastAcceptedValue, lastAcceptedTerm, descendant, initialConfiguration, initialValue, initialAcceptedVersions>>
 
 \* node n handles a join request and checks if it has received enough joins (= votes)
 \* for its term to be elected as master
@@ -158,7 +153,7 @@ HandleJoin(n, m) ==
   /\ UNCHANGED <<lastCommittedConfiguration, currentTerm, publishVotes, messages, descendant,
                  lastAcceptedVersion, lastAcceptedValue, lastAcceptedConfiguration,
                  lastAcceptedTerm, startedJoinSinceLastReboot, lastPublishedConfiguration,
-                 initialConfiguration, initialValue, initialCommittedVersion>>
+                 initialConfiguration, initialValue, initialAcceptedVersions>>
 
 \* client causes a cluster state change val with configuration cfg
 HandleClientValue(n, t, v, val, cfg) ==
@@ -196,7 +191,7 @@ HandleClientValue(n, t, v, val, cfg) ==
        /\ messages' = messages \cup publishRequests
        /\ UNCHANGED <<startedJoinSinceLastReboot, lastCommittedConfiguration, currentTerm, electionWon,
                       lastAcceptedVersion, lastAcceptedValue, lastAcceptedTerm, lastAcceptedConfiguration,
-                      joinVotes, initialConfiguration, initialValue, initialCommittedVersion>>
+                      joinVotes, initialConfiguration, initialValue, initialAcceptedVersions>>
 
 \* handle publish request m on node n
 HandlePublishRequest(n, m) ==
@@ -218,7 +213,7 @@ HandlePublishRequest(n, m) ==
        /\ messages' = messages \cup {response}
        /\ UNCHANGED <<startedJoinSinceLastReboot, currentTerm, descendant, lastPublishedConfiguration,
                       electionWon, lastPublishedVersion, joinVotes, publishVotes, initialConfiguration,
-                      initialValue, initialCommittedVersion>>
+                      initialValue, initialAcceptedVersions>>
 
 \* node n commits a change
 HandlePublishResponse(n, m) ==
@@ -243,7 +238,7 @@ HandlePublishResponse(n, m) ==
   /\ UNCHANGED <<startedJoinSinceLastReboot, lastCommittedConfiguration, currentTerm, electionWon, descendant,
                    lastAcceptedVersion, lastAcceptedValue, lastAcceptedTerm, lastAcceptedConfiguration,
                    lastPublishedVersion, lastPublishedConfiguration, joinVotes, initialConfiguration,
-                   initialValue, initialCommittedVersion>>
+                   initialValue, initialAcceptedVersions>>
 
 \* apply committed configuration to node n
 HandleCommit(n, m) ==
@@ -255,7 +250,7 @@ HandleCommit(n, m) ==
   /\ lastCommittedConfiguration' = [lastCommittedConfiguration EXCEPT ![n] = lastAcceptedConfiguration[n]]
   /\ UNCHANGED <<currentTerm, joinVotes, messages, lastAcceptedTerm, lastAcceptedValue, startedJoinSinceLastReboot, descendant,
                  electionWon, lastAcceptedConfiguration, lastAcceptedVersion, lastPublishedVersion, publishVotes,
-                 lastPublishedConfiguration, initialConfiguration, initialValue, initialCommittedVersion>>
+                 lastPublishedConfiguration, initialConfiguration, initialValue, initialAcceptedVersions>>
 
 \* crash/restart node n (loses ephemeral state)
 RestartNode(n) ==
@@ -267,7 +262,7 @@ RestartNode(n) ==
   /\ publishVotes' = [publishVotes EXCEPT ![n] = {}]
   /\ UNCHANGED <<messages, lastAcceptedVersion, currentTerm, lastCommittedConfiguration, descendant,
                  lastAcceptedTerm, lastAcceptedValue, lastAcceptedConfiguration, initialConfiguration,
-                 initialValue, initialCommittedVersion>>
+                 initialValue, initialAcceptedVersions>>
 
 \* next-step relation
 Next ==
@@ -345,7 +340,10 @@ CommittedValuesDescendantsFromCommittedValues ==
 
 CommittedValuesDescendantsFromInitialValue ==
     \E v \in InitialVersions :
-        /\ initialCommittedVersion <= v
+        /\ \E n \in Nodes : v = initialAcceptedVersions[n]
+        /\ \E votes \in SUBSET(initialConfiguration) :
+                            /\ IsQuorum(votes, initialConfiguration)
+                            /\ \A n \in votes : initialAcceptedVersions[n] <= v
         /\ \A m \in messages :
                 CommittedPublishRequest(m)
             =>
