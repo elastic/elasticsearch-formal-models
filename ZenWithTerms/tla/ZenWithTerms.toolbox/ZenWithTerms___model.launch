@@ -19,7 +19,7 @@
     <stringAttribute key="modelBehaviorNext" value="Next"/>
     <stringAttribute key="modelBehaviorSpec" value=""/>
     <intAttribute key="modelBehaviorSpecType" value="2"/>
-    <stringAttribute key="modelBehaviorVars" value="lastAcceptedTerm, initialConfiguration, messages, initialValue, lastPublishedConfiguration, lastPublishedVersion, electionWon, lastCommittedConfiguration, startedJoinSinceLastReboot, publishVotes, currentTerm, lastAcceptedVersion, descendant, joinVotes, lastAcceptedConfiguration, lastAcceptedValue"/>
+    <stringAttribute key="modelBehaviorVars" value="lastAcceptedTerm, initialConfiguration, messages, initialValue, lastPublishedConfiguration, lastPublishedVersion, electionWon, lastCommittedConfiguration, startedJoinSinceLastReboot, publishVotes, currentTerm, lastAcceptedVersion, descendant, joinVotes, lastAcceptedConfiguration, initialAcceptedVersion, lastAcceptedValue"/>
     <stringAttribute key="modelComments" value=""/>
     <booleanAttribute key="modelCorrectnessCheckDeadlock" value="true"/>
     <listAttribute key="modelCorrectnessInvariants">
@@ -32,6 +32,7 @@
         <listEntry value="1NewerOpsBasedOnOlderCommittedOps"/>
         <listEntry value="1CommitHasQuorumVsPreviousCommittedConfiguration"/>
         <listEntry value="1P2bInvariant"/>
+        <listEntry value="1DescendantRelationIsTransitive"/>
     </listAttribute>
     <listAttribute key="modelCorrectnessProperties"/>
     <stringAttribute key="modelExpressionEval" value=""/>
@@ -48,6 +49,7 @@
     <listAttribute key="modelParameterDefinitions">
         <listEntry value="Terms;;{0,1,2};0;0"/>
         <listEntry value="Versions;;{0,1,2,3};0;0"/>
+        <listEntry value="InitialVersions;;{0,1,2};0;0"/>
     </listAttribute>
     <stringAttribute key="modelParameterModelValues" value="{}"/>
     <stringAttribute key="modelParameterNewDefinitions" value=""/>
