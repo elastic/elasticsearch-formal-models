@@ -44,6 +44,7 @@
         <listEntry value="PublishResponse;;PublishResponse;1;0"/>
         <listEntry value="Values;;{v1, v2};1;1"/>
         <listEntry value="PublishRequest;;PublishRequest;1;0"/>
+        <listEntry value="NotNodes;;{x1, x2, x3};1;1"/>
     </listAttribute>
     <stringAttribute key="modelParameterContraint" value="StateConstraint"/>
     <listAttribute key="modelParameterDefinitions">

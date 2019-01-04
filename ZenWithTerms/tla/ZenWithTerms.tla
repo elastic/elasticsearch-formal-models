@@ -11,6 +11,9 @@ CONSTANTS Values
 \* Set of node ids (all master-eligible nodes)
 CONSTANTS Nodes
 
+\* Set of ids that definitely do not belong to nodes.
+CONSTANTS NotNodes
+
 \* RPC message types
 CONSTANTS
   Join,
@@ -68,6 +71,12 @@ IsPublishQuorum(n, votes) ==
   /\ IsQuorum(votes, lastCommittedConfiguration[n])
   /\ IsQuorum(votes, lastPublishedConfiguration[n])
 
+InitialConfigurations(actualConfiguration) ==
+  { cfg \in SUBSET(actualConfiguration \union NotNodes)
+    :   /\ Cardinality(cfg) = Cardinality(actualConfiguration)
+        /\ IsQuorum(cfg, actualConfiguration)
+  }
+
 \* initial model state
 Init == /\ messages = {}
         /\ descendant = {}
@@ -88,7 +97,7 @@ Init == /\ messages = {}
         /\ publishVotes = [n \in Nodes |-> {}]
 
 \* Bootstrap node n with the initial state and config 
-SetInitialState(n) ==
+SetInitialState(n, cfg) ==
   /\ lastAcceptedConfiguration[n] = {} \* not already bootstrapped
   /\ Assert(lastAcceptedTerm[n] = 0, "lastAcceptedTerm should be 0")
   /\ Assert(lastCommittedConfiguration[n] = {}, "lastCommittedConfiguration should be empty")
@@ -97,9 +106,9 @@ SetInitialState(n) ==
   /\ Assert(electionWon[n] = FALSE, "electionWon should be FALSE")
   /\ Assert(joinVotes[n] = {}, "joinVotes should be empty")
   /\ Assert(publishVotes[n] = {}, "publishVotes should be empty")
-  /\ lastAcceptedConfiguration' = [lastAcceptedConfiguration EXCEPT ![n] = initialConfiguration]
+  /\ lastAcceptedConfiguration' = [lastAcceptedConfiguration EXCEPT ![n] = cfg]
   /\ lastAcceptedValue' = [lastAcceptedValue EXCEPT ![n] = initialValue]
-  /\ lastCommittedConfiguration' = [lastCommittedConfiguration EXCEPT ![n] = initialConfiguration]
+  /\ lastCommittedConfiguration' = [lastCommittedConfiguration EXCEPT ![n] = cfg]
   /\ Assert(lastAcceptedTerm[n] = 0, "lastAcceptedTerm should be 0")
   /\ Assert(lastAcceptedConfiguration'[n] /= {}, "lastAcceptedConfiguration should be non-empty")
   /\ Assert(lastCommittedConfiguration'[n] /= {}, "lastCommittedConfiguration should be non-empty")
@@ -263,7 +272,7 @@ RestartNode(n) ==
 
 \* next-step relation
 Next ==
-  \/ \E n \in Nodes : SetInitialState(n)
+  \/ \E n \in Nodes : \E cfg \in InitialConfigurations(initialConfiguration) : SetInitialState(n, cfg)
   \/ \E n, nm \in Nodes : \E t \in Terms : HandleStartJoin(n, nm, t)
   \/ \E m \in messages : HandleJoin(m.dest, m)
   \/ \E n \in Nodes : \E t \in Terms : \E v \in Versions : \E val \in Values : \E vs \in ValidConfigs : HandleClientValue(n, t, v, val, vs)
