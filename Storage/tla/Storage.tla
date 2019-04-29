@@ -16,7 +16,6 @@ VARIABLES
 (*************************************************************************)
 (* First we define some helper functions to work with files abstraction. *)
 (* Files is a function from file generation to some content.             *)
-(* If content is -1, it means that file does not exist.                  *)                                                 
 (*************************************************************************)
 
 (*************************************************************************)
@@ -24,31 +23,24 @@ VARIABLES
 (* no files then -1 is returned.                                         *)                                              
 (*************************************************************************)
 CurrentGeneration(files) == 
-    IF \A gen \in DOMAIN files : files[gen] = -1 
+    IF DOMAIN files = {}
     THEN -1 ELSE
-    CHOOSE gen \in DOMAIN files : 
-        /\ files[gen] /= -1
-        /\ \A otherGen \in DOMAIN files : 
-            \/ files[otherGen] = -1 
-            \/ gen \geq otherGen 
+    CHOOSE gen \in DOMAIN files : \A otherGen \in DOMAIN files : gen \geq otherGen
 
 (*************************************************************************)
 (* DeleteFile removes file with generation delGen.                        *)
 (*************************************************************************)
-DeleteFile(files, delGen) == 
-    [gen \in DOMAIN files |-> IF gen = delGen THEN -1 ELSE files[gen]]
+DeleteFile(files, delGen) == [gen \in DOMAIN files \ {delGen} |-> files[gen]]
 
 (*************************************************************************)
 (* DeleteFilesExcept removes all files except keepGen.                 *)
 (*************************************************************************)
-DeleteFilesExcept(files, keepGen) ==
-    [gen \in DOMAIN files |-> IF gen = keepGen THEN files[gen] ELSE -1]
+DeleteFilesExcept(files, keepGen) == (keepGen :> files[keepGen])
 
 (*************************************************************************)
 (* WriteFile creates new file with specified generation and content.     *)
 (*************************************************************************)
-WriteFile(files, gen, content) ==
-    [files EXCEPT ![gen] = content]    
+WriteFile(files, gen, content) == (gen :> content) @@ files
   
 --------------------------------------------------------------------------
 (*************************************************************************)
@@ -154,8 +146,8 @@ DeleteNewHard ==
 (* We can define Init and Next functions now.                            *)
 (*************************************************************************)   
 Init == 
-   /\ metadata = [x \in 0..MaxNumberOfSteps |-> -1] \* reserve enough space for metadata files
-   /\ manifest = [x \in 0..MaxNumberOfSteps |-> -1] \* reserve enough space for manifest files
+   /\ metadata = <<>>
+   /\ manifest = <<>>
    /\ newMeta = -1 \* no latest metadata file
    /\ newManifest = -1 \* no latest manifest file
    /\ state = "writeMeta" \* we start with writing metadata file
@@ -167,7 +159,7 @@ Next ==
        \/ (state = "deleteMeta"    /\ DeleteMeta)
        \/ (state = "writeManifest" /\ WriteManifest)
        \/ (state = "deleteOld"     /\ DeleteOld)
-       \/ (state = "deleteNew"     /\ DeleteNewBuggy) \* try DeleteNewEasy and DeleteNewHard
+       \/ (state = "deleteNew"     /\ DeleteNewEasy) \* try DeleteNewEasy and DeleteNewHard
     /\ steps' = steps + 1
 
 --------------------------------------------------------------------------
@@ -177,7 +169,7 @@ Next ==
 MetadataFileReferencedByManifestExists ==
     CurrentGeneration(manifest) /= -1 
         => 
-    metadata[manifest[CurrentGeneration(manifest)]] /= -1
+    manifest[CurrentGeneration(manifest)] \in DOMAIN metadata
     
 MetadataReferencedByManifestIsValid ==
     CurrentGeneration(manifest) /= -1 
