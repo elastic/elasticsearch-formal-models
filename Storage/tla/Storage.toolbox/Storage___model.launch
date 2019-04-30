@@ -6,7 +6,7 @@
     <intAttribute key="dfidDepth" value="100"/>
     <booleanAttribute key="dfidMode" value="false"/>
     <intAttribute key="distributedFPSetCount" value="0"/>
-    <stringAttribute key="distributedNetworkInterface" value="10.8.8.15"/>
+    <stringAttribute key="distributedNetworkInterface" value="10.2.42.180"/>
     <intAttribute key="distributedNodesCount" value="1"/>
     <stringAttribute key="distributedTLC" value="off"/>
     <stringAttribute key="distributedTLCVMArgs" value=""/>
@@ -32,6 +32,7 @@
     <stringAttribute key="modelParameterActionConstraint" value=""/>
     <listAttribute key="modelParameterConstants">
         <listEntry value="MaxNewMeta;;5;0;0"/>
+        <listEntry value="MetaDataContent;;MetaDataContent;1;0"/>
     </listAttribute>
     <stringAttribute key="modelParameterContraint" value="newMeta &lt; MaxNewMeta"/>
     <listAttribute key="modelParameterDefinitions"/>
