@@ -1,7 +1,7 @@
 ------------------------------ MODULE Storage ------------------------------
 EXTENDS Integers, FiniteSets, TLC
 
-CONSTANTS MaxNewMeta \* maximum number of execution steps of FSM
+CONSTANTS MaxNewMeta \* maximum generation of newMeta to limit the state space
 
 VARIABLES
   metadata,      \* metaData[i] = 1 if metadata of generation i is present
@@ -157,7 +157,7 @@ Next ==
        \/ (state = "deleteMeta"    /\ DeleteMeta)
        \/ (state = "writeManifest" /\ WriteManifest)
        \/ (state = "deleteOld"     /\ DeleteOld)
-       \/ (state = "deleteNew"     /\ DeleteNewBuggy) \* try DeleteNewEasy and DeleteNewHard
+       \/ (state = "deleteNew"     /\ DeleteNewEasy) \* try DeleteNewBuggy and DeleteNewHard
 
 --------------------------------------------------------------------------
 (*************************************************************************)
