@@ -161,7 +161,7 @@ Next ==
     \/ (state = "writeManifest"     /\ WriteManifest)
     \/ (state = "deleteOldManifest" /\ DeleteOldManifest)
     \/ (state = "deleteOldMeta"     /\ DeleteOldMeta)
-    \/ (state = "deleteNewManifest" /\ DeleteNewManifestEasy) \* try DeleteNewBuggy and DeleteNewHard
+    \/ (state = "deleteNewManifest" /\ DeleteNewManifestEasy) \* try DeleteNewManifestBuggy and DeleteNewManifestHard
     \/ (state = "deleteNewMeta"     /\ DeleteNewMeta)
 --------------------------------------------------------------------------
 (*************************************************************************)
