@@ -20,7 +20,7 @@
     <stringAttribute key="modelBehaviorNext" value="Next"/>
     <stringAttribute key="modelBehaviorSpec" value=""/>
     <intAttribute key="modelBehaviorSpecType" value="2"/>
-    <stringAttribute key="modelBehaviorVars" value="state, metadata, newManifest, possibleStates, steps, newMeta, manifest"/>
+    <stringAttribute key="modelBehaviorVars" value="state, metadata, newManifest, possibleStates, newMeta, manifest"/>
     <stringAttribute key="modelComments" value=""/>
     <booleanAttribute key="modelCorrectnessCheckDeadlock" value="true"/>
     <listAttribute key="modelCorrectnessInvariants">
@@ -29,11 +29,11 @@
     </listAttribute>
     <listAttribute key="modelCorrectnessProperties"/>
     <stringAttribute key="modelExpressionEval" value=""/>
-    <stringAttribute key="modelParameterActionConstraint" value="steps &lt; MaxNumberOfSteps"/>
+    <stringAttribute key="modelParameterActionConstraint" value=""/>
     <listAttribute key="modelParameterConstants">
-        <listEntry value="MaxNumberOfSteps;;10;0;0"/>
+        <listEntry value="MaxNewMeta;;5;0;0"/>
     </listAttribute>
-    <stringAttribute key="modelParameterContraint" value=""/>
+    <stringAttribute key="modelParameterContraint" value="newMeta &lt; MaxNewMeta"/>
     <listAttribute key="modelParameterDefinitions"/>
     <stringAttribute key="modelParameterModelValues" value="{}"/>
     <stringAttribute key="modelParameterNewDefinitions" value=""/>
